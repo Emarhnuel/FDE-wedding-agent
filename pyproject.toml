@@ -1,0 +1,34 @@
+[project]
+name = "juniper-hollow-agent"
+version = "0.1.0"
+description = "Wedding inquiry and retention agents for Juniper Hollow Weddings & Events."
+requires-python = ">=3.12"
+dependencies = [
+    "deepagents==0.7.22",
+    "langchain==1.4.3",
+    "langchain-core==1.6.6",
+    "langchain-openrouter==0.2.9",
+    "langchain-openai==1.6.7",
+    "langchain-chroma==1.1.0",
+    "langchain-text-splitters==1.1.3",
+    "chromadb==1.5.9",
+    "pypdf==6.19.0",
+    "pydantic==2.13.5",
+    "langsmith==0.14.4",
+    "httpx==0.28.1",
+    "python-dotenv==1.2.4",
+]
+
+[dependency-groups]
+dev = ["pytest==9.1.1"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
