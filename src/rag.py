@@ -1,13 +1,22 @@
+import os
 from functools import cache
 from pathlib import Path
 
+from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
 
-from . import config
+load_dotenv()
+
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+EMBEDDING_MODEL = "google/gemini-embedding-2"
+EMBEDDING_DIMENSIONS = 768
+CHROMA_DIRECTORY = ".data/chroma"
+CHROMA_COLLECTION = "juniper_knowledge"
 
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
 
@@ -22,22 +31,22 @@ def prepare_document(content: str, title: str | None = None) -> str:
 
 @cache
 def get_vector_store() -> Chroma:
-    if not config.OPENROUTER_API_KEY:
+    if not OPENROUTER_API_KEY:
         raise RuntimeError("OPENROUTER_API_KEY is not set")
     # OpenAIEmbeddings is LangChain's OpenAI-compatible client; OpenRouter routes
     # these requests to google/gemini-embedding-2.
     embeddings = OpenAIEmbeddings(
-        model=config.EMBEDDING_MODEL,
-        dimensions=config.EMBEDDING_DIMENSIONS,
-        base_url=config.OPENROUTER_BASE_URL,
-        api_key=config.OPENROUTER_API_KEY,
+        model=EMBEDDING_MODEL,
+        dimensions=EMBEDDING_DIMENSIONS,
+        base_url=OPENROUTER_BASE_URL,
+        api_key=OPENROUTER_API_KEY,
         check_embedding_ctx_length=False,
         model_kwargs={"encoding_format": "float"},
     )
     return Chroma(
-        collection_name=config.CHROMA_COLLECTION,
+        collection_name=CHROMA_COLLECTION,
         embedding_function=embeddings,
-        persist_directory=config.CHROMA_DIRECTORY,
+        persist_directory=CHROMA_DIRECTORY,
     )
 
 
