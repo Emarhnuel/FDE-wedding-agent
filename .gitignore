@@ -7,3 +7,4 @@ __pycache__/
 production-main/
 docs/
 .devin/
+uv.lock
