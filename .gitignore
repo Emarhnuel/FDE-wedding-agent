@@ -8,3 +8,4 @@ production-main/
 docs/
 .devin/
 uv.lock
+claude_help
