@@ -50,14 +50,7 @@ def get_gmail_access_token() -> str:
     return response.json()["access_token"]
 
 
-def send_gmail_message(
-    access_token: str,
-    *,
-    recipient: str,
-    subject: str,
-    body: str,
-    gmail_thread_id: str | None = None,
-) -> dict[str, Any]:
+def send_gmail_message(access_token: str, *, recipient: str, subject: str, body: str) -> dict[str, Any]:
     """Send a plain-text email from the shared Gmail inbox and return Gmail's message record."""
     sender = os.environ.get("GMAIL_SENDER", "")
     if not sender:
@@ -67,13 +60,10 @@ def send_gmail_message(
     message["From"] = sender
     message["Subject"] = subject
     message.set_content(body)
-    payload: dict[str, Any] = {"raw": base64.urlsafe_b64encode(message.as_bytes()).decode()}
-    if gmail_thread_id:
-        payload["threadId"] = gmail_thread_id
     response = httpx.post(
         GMAIL_SEND_URL,
         headers={"Authorization": f"Bearer {access_token}"},
-        json=payload,
+        json={"raw": base64.urlsafe_b64encode(message.as_bytes()).decode()},
         timeout=30.0,
     )
     response.raise_for_status()
@@ -184,10 +174,9 @@ def claim_draft_for_sending(draft: dict[str, Any], company_id: str) -> bool:
     return bool(rows)
 
 
-def deliver_claimed_draft(draft: dict[str, Any], company_id: str) -> str:
+def deliver_claimed_draft(draft: dict[str, Any], company_id: str, access_token: str) -> str:
     """Send a claimed draft, record the outcome, and never retry an uncertain send."""
     draft_id = draft["id"]
-    access_token = get_gmail_access_token()
     try:
         gmail_message = send_gmail_message(
             access_token,
@@ -195,9 +184,15 @@ def deliver_claimed_draft(draft: dict[str, Any], company_id: str) -> str:
             subject=draft["subject"],
             body=draft["body"],
         )
-    except httpx.HTTPStatusError as exc:
-        # A 4xx means Gmail rejected the request, so nothing was sent.
-        status = "send_failed" if exc.response.status_code < 500 else "delivery_uncertain"
+    except httpx.HTTPError as exc:
+        if isinstance(exc, httpx.HTTPStatusError):
+            # A 4xx means Gmail rejected the request, so nothing was sent.
+            code = exc.response.status_code
+            status, details = ("send_failed" if code < 500 else "delivery_uncertain"), {"http_status": code}
+            message = f"Gmail send for draft {draft_id} ended with status={status}; staff must reconcile."
+        else:
+            status, details = "delivery_uncertain", {"error": type(exc).__name__}
+            message = f"Gmail send for draft {draft_id} has an unknown outcome; do not retry, staff must reconcile."
         database.update_draft_status(draft_id, company_id=company_id, status=status)
         database.log_audit_event(
             company_id=company_id,
@@ -205,22 +200,9 @@ def deliver_claimed_draft(draft: dict[str, Any], company_id: str) -> str:
             action=f"email_{status}",
             target_type="email_draft",
             target_id=draft_id,
-            details={"http_status": exc.response.status_code},
+            details=details,
         )
-        raise ValueError(f"Gmail send for draft {draft_id} ended with status={status}; staff must reconcile.") from exc
-    except httpx.HTTPError as exc:
-        database.update_draft_status(draft_id, company_id=company_id, status="delivery_uncertain")
-        database.log_audit_event(
-            company_id=company_id,
-            actor_id=AGENT_ACTOR_ID,
-            action="email_delivery_uncertain",
-            target_type="email_draft",
-            target_id=draft_id,
-            details={"error": type(exc).__name__},
-        )
-        raise ValueError(
-            f"Gmail send for draft {draft_id} has an unknown outcome; do not retry, staff must reconcile."
-        ) from exc
+        raise ValueError(message) from exc
 
     database.update_draft_status(draft_id, company_id=company_id, status="sent")
 
@@ -272,10 +254,12 @@ def send_customer_email(
         body=body,
         context=runtime.context,
     )
+    # Fetch the token before claiming, so an auth failure leaves the draft sendable.
+    access_token = get_gmail_access_token()
     if not claim_draft_for_sending(draft, company_id):
         raise ValueError(f"Draft {draft_id} was already claimed by another delivery attempt.")
 
-    result = deliver_claimed_draft(draft, company_id)
+    result = deliver_claimed_draft(draft, company_id, access_token)
     return f"Sent inquiry email [draft_id={draft['id']}, status=sent, {result}]"
 
 
@@ -310,10 +294,11 @@ def send_retention_email(
     if not eligible:
         raise ValueError(f"Couple is no longer eligible for outreach: {', '.join(blockers)}.")
 
+    access_token = get_gmail_access_token()
     if not claim_draft_for_sending(draft, company_id):
         raise ValueError(f"Draft {draft_id} was already claimed by another delivery attempt.")
 
-    result = deliver_claimed_draft(draft, company_id)
+    result = deliver_claimed_draft(draft, company_id, access_token)
     # Cooldown starts only after confirmed delivery.
     database.update_records(
         "couples",
