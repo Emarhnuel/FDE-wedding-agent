@@ -11,8 +11,8 @@ from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
 from deepagents.backends.protocol import WriteResult
 from deepagents.backends.utils import create_file_data
-from langchain.tools import tool
 from langchain_core.messages import SystemMessage
+from langgraph.checkpoint.memory import InMemorySaver
 
 # Load environment variables
 load_dotenv()
@@ -46,22 +46,10 @@ from src.middleware import (
 from src.tools.inquiry_tools import get_inquiry_history, save_inquiry_draft
 from src.tools.knowledge_tools import search_company_knowledge
 from src.tools.retention_tools import get_couple_history, save_retention_draft
+from src.tools.supervisor_tools import hand_off_to_staff, send_customer_email, send_retention_email
 
-
-# =============================================================================
-# TOOL PLACEHOLDERS (until supervisor_tools is built)
-# =============================================================================
-
-@tool
-def send_customer_email(recipient: str, subject: str, body: str, draft_id: str = "", requires_review: bool = False) -> str:
-    """Placeholder: Guarded supervisor tool to send an inquiry reply or pause for staff approval."""
-    return f"Placeholder inquiry email sent to {recipient} (draft_id={draft_id})."
-
-
-@tool
-def send_retention_email(recipient: str, subject: str, body: str, draft_id: str = "") -> str:
-    """Placeholder: Guarded supervisor tool to send an approved retention outreach email."""
-    return f"Placeholder retention email sent to {recipient} (draft_id={draft_id})."
+# Staff review every draft before it is saved, in addition to the guarded send tools.
+DRAFT_INTERRUPT_CONFIG = {"allowed_decisions": ["approve", "edit", "reject"]}
 
 
 # =============================================================================
@@ -153,6 +141,7 @@ inquiry_agent = {
     "system_prompt": INQUIRY_SYSTEM_PROMPT,
     "tools": [get_inquiry_history, save_inquiry_draft],
     "model": model1,
+    "interrupt_on": {"save_inquiry_draft": DRAFT_INTERRUPT_CONFIG},
     "middleware": [
         ToolCallLimitMiddleware(
             tool_name="save_inquiry_draft",
@@ -178,6 +167,7 @@ retention_agent = {
     "system_prompt": RETENTION_SYSTEM_PROMPT,
     "tools": [get_couple_history, save_retention_draft],
     "model": model1,
+    "interrupt_on": {"save_retention_draft": DRAFT_INTERRUPT_CONFIG},
     "middleware": [
         ToolCallLimitMiddleware(
             tool_name="save_retention_draft",
@@ -204,7 +194,7 @@ supervisor = create_deep_agent(
     model=model1,
     system_prompt=_supervisor_system_message,
     subagents=[knowledge_retriever, inquiry_agent, retention_agent],
-    tools=[send_customer_email, send_retention_email],
+    tools=[send_customer_email, send_retention_email, hand_off_to_staff],
     interrupt_on={
         "send_customer_email": DELIVERY_INTERRUPT_CONFIG,
         "send_retention_email": {
@@ -220,6 +210,8 @@ supervisor = create_deep_agent(
         ToolErrorMiddleware(on_error=sanitize_tool_error),
     ],
     backend=agent_backend,
+    # interrupt_on needs a checkpointer; runtime.py will swap in PostgresSaver for deployment.
+    checkpointer=InMemorySaver(),
 )
 
 print("[INFO] Supervisor agent created successfully")
