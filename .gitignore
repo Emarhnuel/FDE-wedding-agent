@@ -8,4 +8,7 @@ production-main/
 docs/
 .devin/
 uv.lock
-claude_help
+# claude_help
+.mcp.json
+CLAUDE.md
+claude_help.md
