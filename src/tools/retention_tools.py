@@ -26,8 +26,13 @@ def check_couple_eligibility(
     *,
     company_id: str,
     cooldown_days: int = 90,
+    exclude_draft_id: str | None = None,
 ) -> tuple[bool, list[str]]:
-    """Evaluate all retention suppression rules and return (is_eligible, blockers)."""
+    """Evaluate all retention suppression rules and return (is_eligible, blockers).
+
+    Pass exclude_draft_id when rechecking before sending, so the draft being sent
+    does not count as a competing pending draft.
+    """
     blockers: list[str] = []
     if not couple.get("marketing_consent"):
         blockers.append("missing_marketing_consent")
@@ -43,14 +48,16 @@ def check_couple_eligibility(
         if sent_dt > cutoff:
             blockers.append("within_cooldown_window")
 
-    pending = database.query_records(
-        "email_drafts",
-        company_id=f"eq.{company_id}",
-        contact_id=f"eq.{couple['contact_id']}",
-        job_type="eq.retention",
-        status="eq.pending_review",
-        limit=1,
-    )
+    pending_filters = {
+        "company_id": f"eq.{company_id}",
+        "contact_id": f"eq.{couple['contact_id']}",
+        "job_type": "eq.retention",
+        "status": "eq.pending_review",
+        "limit": 1,
+    }
+    if exclude_draft_id:
+        pending_filters["id"] = f"neq.{exclude_draft_id}"
+    pending = database.query_records("email_drafts", **pending_filters)
     if pending:
         blockers.append("existing_pending_retention_draft")
 
