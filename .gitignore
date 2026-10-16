@@ -12,3 +12,4 @@ uv.lock
 .mcp.json
 CLAUDE.md
 claude_help.md
+.agents/
