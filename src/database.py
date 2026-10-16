@@ -112,6 +112,12 @@ CREATE TABLE IF NOT EXISTS jobs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS sync_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 """
 
 
@@ -303,6 +309,16 @@ def enqueue_job(
         if exc.response.status_code != 409:
             raise
         return query_records("jobs", dedupe_key=f"eq.{dedupe_key}", limit=1)[0], False
+
+
+def get_sync_state(key: str) -> str | None:
+    """Read a stored integration cursor, such as the Gmail history position."""
+    rows = query_records("sync_state", key=f"eq.{key}", limit=1)
+    return rows[0]["value"] if rows else None
+
+
+def set_sync_state(key: str, value: str) -> None:
+    insert_record("sync_state", {"key": key, "value": value, "updated_at": datetime.now(UTC).isoformat()}, upsert=True)
 
 
 def log_audit_event(
