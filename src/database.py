@@ -80,6 +80,38 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     details JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS agent_reviews (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id TEXT NOT NULL DEFAULT 'juniper-hollow',
+    thread_id TEXT NOT NULL,
+    interrupt_id TEXT NOT NULL,
+    action_index INTEGER NOT NULL,
+    action_name TEXT NOT NULL,
+    action_args JSONB NOT NULL DEFAULT '{}'::jsonb,
+    draft_id TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    decision JSONB,
+    decided_by TEXT,
+    decided_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (interrupt_id, action_index)
+);
+
+CREATE TABLE IF NOT EXISTS jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id TEXT NOT NULL DEFAULT 'juniper-hollow',
+    kind TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status TEXT NOT NULL DEFAULT 'queued',
+    dedupe_key TEXT UNIQUE NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    runtime_session_id TEXT,
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 """
 
 
@@ -244,6 +276,33 @@ def get_eligible_couples(company_id: str = "juniper-hollow", cooldown_days: int 
         if not last_sent or datetime.fromisoformat(last_sent.replace("Z", "+00:00")) <= cutoff:
             eligible.append(row)
     return eligible
+
+
+def enqueue_job(
+    *,
+    company_id: str,
+    kind: str,
+    thread_id: str,
+    dedupe_key: str,
+    payload: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """Durably record a job once per dedupe_key; returns (job, created) so repeats are not re-queued."""
+    try:
+        job = insert_record(
+            "jobs",
+            {
+                "company_id": company_id,
+                "kind": kind,
+                "thread_id": thread_id,
+                "dedupe_key": dedupe_key,
+                "payload": payload or {},
+            },
+        )
+        return job, True
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 409:
+            raise
+        return query_records("jobs", dedupe_key=f"eq.{dedupe_key}", limit=1)[0], False
 
 
 def log_audit_event(
