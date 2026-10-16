@@ -50,8 +50,13 @@ def get_gmail_access_token() -> str:
     return response.json()["access_token"]
 
 
-def send_gmail_message(access_token: str, *, recipient: str, subject: str, body: str) -> dict[str, Any]:
-    """Send a plain-text email from the shared Gmail inbox and return Gmail's message record."""
+def send_gmail_message(
+    access_token: str, *, recipient: str, subject: str, body: str, reply_to: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Send a plain-text email from the shared Gmail inbox and return Gmail's message record.
+
+    reply_to (the inbound Gmail inquiry payload) threads the reply into the customer's conversation.
+    """
     sender = os.environ.get("GMAIL_SENDER", "")
     if not sender:
         raise RuntimeError("GMAIL_SENDER is not set in .env")
@@ -59,15 +64,29 @@ def send_gmail_message(access_token: str, *, recipient: str, subject: str, body:
     message["To"] = recipient
     message["From"] = sender
     message["Subject"] = subject
+    payload: dict[str, Any] = {}
+    if reply_to:
+        # Gmail threads a reply by threadId plus RFC 2822 In-Reply-To/References and a matching subject.
+        payload["threadId"] = reply_to["gmail_thread_id"]
+        if reply_to.get("message_id_header"):
+            message["In-Reply-To"] = message["References"] = reply_to["message_id_header"]
     message.set_content(body)
+    payload["raw"] = base64.urlsafe_b64encode(message.as_bytes()).decode()
     response = httpx.post(
-        GMAIL_SEND_URL,
-        headers={"Authorization": f"Bearer {access_token}"},
-        json={"raw": base64.urlsafe_b64encode(message.as_bytes()).decode()},
-        timeout=30.0,
+        GMAIL_SEND_URL, headers={"Authorization": f"Bearer {access_token}"}, json=payload, timeout=30.0
     )
     response.raise_for_status()
     return response.json()
+
+
+def latest_gmail_inquiry(draft: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the newest inbound Gmail payload for the draft's conversation, if it came from Gmail."""
+    if not draft["thread_id"].startswith("gmail:"):
+        return None
+    jobs = database.query_records(
+        "jobs", thread_id=f"eq.{draft['thread_id']}", kind="eq.inquiry", order="created_at.desc", limit=1
+    )
+    return jobs[0]["payload"] if jobs else None
 
 
 def record_hubspot_email_note(recipient: str, subject: str, body: str) -> str | None:
@@ -174,7 +193,9 @@ def claim_draft_for_sending(draft: dict[str, Any], company_id: str) -> bool:
     return bool(rows)
 
 
-def deliver_claimed_draft(draft: dict[str, Any], company_id: str, access_token: str) -> str:
+def deliver_claimed_draft(
+    draft: dict[str, Any], company_id: str, access_token: str, reply_to: dict[str, Any] | None
+) -> str:
     """Send a claimed draft, record the outcome, and never retry an uncertain send."""
     draft_id = draft["id"]
     try:
@@ -183,6 +204,7 @@ def deliver_claimed_draft(draft: dict[str, Any], company_id: str, access_token: 
             recipient=draft["recipient"],
             subject=draft["subject"],
             body=draft["body"],
+            reply_to=reply_to,
         )
     except httpx.HTTPError as exc:
         if isinstance(exc, httpx.HTTPStatusError):
@@ -254,12 +276,12 @@ def send_customer_email(
         body=body,
         context=runtime.context,
     )
-    # Fetch the token before claiming, so an auth failure leaves the draft sendable.
-    access_token = get_gmail_access_token()
+    # Fetch the token and thread details before claiming, so a failure leaves the draft sendable.
+    access_token, reply_to = get_gmail_access_token(), latest_gmail_inquiry(draft)
     if not claim_draft_for_sending(draft, company_id):
         raise ValueError(f"Draft {draft_id} was already claimed by another delivery attempt.")
 
-    result = deliver_claimed_draft(draft, company_id, access_token)
+    result = deliver_claimed_draft(draft, company_id, access_token, reply_to)
     return f"Sent inquiry email [draft_id={draft['id']}, status=sent, {result}]"
 
 
@@ -294,11 +316,11 @@ def send_retention_email(
     if not eligible:
         raise ValueError(f"Couple is no longer eligible for outreach: {', '.join(blockers)}.")
 
-    access_token = get_gmail_access_token()
+    access_token, reply_to = get_gmail_access_token(), latest_gmail_inquiry(draft)
     if not claim_draft_for_sending(draft, company_id):
         raise ValueError(f"Draft {draft_id} was already claimed by another delivery attempt.")
 
-    result = deliver_claimed_draft(draft, company_id, access_token)
+    result = deliver_claimed_draft(draft, company_id, access_token, reply_to)
     # Cooldown starts only after confirmed delivery.
     database.update_records(
         "couples",
