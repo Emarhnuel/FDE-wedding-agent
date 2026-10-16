@@ -20,7 +20,9 @@ A **Forward Deployed AI Engineering** course project: turning a vague Upwork bri
 **Agents:** Deep Agents (`create_deep_agent`) — supervisor + inquiry + retention subagents  
 **Retrieval:** ChromaDB · Gemini Embedding 2 via OpenRouter · published-source filtering  
 **Comms:** Gmail API · HubSpot CRM  
-**Infra:** AWS Bedrock AgentCore · Lambda · API Gateway · SQS · EventBridge · RDS · S3 · CloudFront — all Terraform  
+**Infra:** AWS Bedrock AgentCore · Lambda · API Gateway · SQS · EventBridge Scheduler · PostgreSQL · S3 · Secrets Manager — all Terraform  
+**Frontend:** Inquiry form + staff portal on AWS Amplify Hosting (default AWS domain, no CloudFront)  
+**CI/CD:** GitHub Actions with OIDC — no AWS keys stored in GitHub  
 **Auth:** InsForge
 
 ## 📁 Layout
@@ -30,10 +32,10 @@ src/
 ├── agents.py      # Deep Agents: supervisor + subagents, memory & approval wiring
 ├── prompts.py     # XML-structured system prompts (the agents' personalities)
 ├── rag.py         # load → split → embed → Chroma → search
-├── api.py         # FastAPI entry: webhooks + staff approval endpoints
+├── api.py         # FastAPI entry: inquiry form + staff approval endpoints
 ├── worker.py      # SQS consumer → AgentCore
 ├── runtime.py     # AgentCore runtime entrypoint
-├── cron.py        # scheduled retention sweeps
+├── cron.py        # Gmail polling, retention sweeps, 120-day cleanup
 ├── config.py      # env-driven settings
 ├── schemas.py     # AgentContext & friends
 ├── tools/         # agent-facing tools (knowledge search, CRM, outreach)
@@ -48,8 +50,19 @@ uv sync   # install pinned deps (uv.lock)
 
 Then create a `.env` — see `src/config.py` for the full key list. `OPENROUTER_API_KEY` is the one you can't skip.
 
+## ☁️ Deployment
+
+Three environments — **dev**, **test** and **prod** — each a Terraform workspace with its own remote state in S3.
+
+- Push to `main` → GitHub Actions deploys **dev**
+- **test** and **prod** → run the deploy workflow by hand
+- Tearing down an environment is a manual workflow that asks you to type its name first
+- The same deploy scripts work locally (PowerShell or bash) and in CI
+
+The backend and frontend ship together: one run builds the images, applies Terraform, then builds and uploads the frontend.
+
 ## ⚠️ Status
 
-Early build phase — agents not yet wired, integrations stubbed. Design docs & course plan live locally (kept out of the repo on purpose).
+Agents, tools, API, worker, runtime and cron are built and tested against live services. Deployment files are scaffolded but empty; document uploads and the frontend come next. Design docs & course plan live locally (kept out of the repo on purpose).
 
 *No weddings were harmed in the making of this codebase.* 🎩
