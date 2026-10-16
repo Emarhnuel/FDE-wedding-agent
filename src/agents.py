@@ -12,7 +12,10 @@ from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
 from deepagents.backends.protocol import WriteResult
 from deepagents.backends.utils import create_file_data
 from langchain_core.messages import SystemMessage
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.store.base import BaseStore
+from langgraph.store.memory import InMemoryStore
 
 # Load environment variables
 load_dotenv()
@@ -189,29 +192,32 @@ _supervisor_system_message = SystemMessage(
     content=[{"type": "text", "text": SUPERVISOR_SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
 )
 
-# Create the supervisor agent
-supervisor = create_deep_agent(
-    model=model1,
-    system_prompt=_supervisor_system_message,
-    subagents=[knowledge_retriever, inquiry_agent, retention_agent],
-    tools=[send_customer_email, send_retention_email, hand_off_to_staff],
-    interrupt_on={
-        "send_customer_email": DELIVERY_INTERRUPT_CONFIG,
-        "send_retention_email": {
-            "allowed_decisions": ["approve", "edit", "reject"],
+def build_supervisor(checkpointer: BaseCheckpointSaver | None = None, store: BaseStore | None = None):
+    """Create the supervisor. interrupt_on requires a checkpointer and /memories/ requires a store;
+    runtime.py passes Postgres-backed ones, and the in-memory defaults are for local runs and tests."""
+    return create_deep_agent(
+        model=model1,
+        system_prompt=_supervisor_system_message,
+        subagents=[knowledge_retriever, inquiry_agent, retention_agent],
+        tools=[send_customer_email, send_retention_email, hand_off_to_staff],
+        interrupt_on={
+            "send_customer_email": DELIVERY_INTERRUPT_CONFIG,
+            "send_retention_email": {
+                "allowed_decisions": ["approve", "edit", "reject"],
+            },
         },
-    },
-    memory=MEMORY_FILES,
-    context_schema=AgentContext,
-    middleware=[
-        DeliveryGuardrailMiddleware(),
-        ModelCallLimitMiddleware(thread_limit=40, run_limit=20, exit_behavior="end"),
-        ModelRetryMiddleware(max_retries=2),
-        ToolErrorMiddleware(on_error=sanitize_tool_error),
-    ],
-    backend=agent_backend,
-    # interrupt_on needs a checkpointer; runtime.py will swap in PostgresSaver for deployment.
-    checkpointer=InMemorySaver(),
-)
+        memory=MEMORY_FILES,
+        context_schema=AgentContext,
+        middleware=[
+            DeliveryGuardrailMiddleware(),
+            ModelCallLimitMiddleware(thread_limit=40, run_limit=20, exit_behavior="end"),
+            ModelRetryMiddleware(max_retries=2),
+            ToolErrorMiddleware(on_error=sanitize_tool_error),
+        ],
+        backend=agent_backend,
+        checkpointer=checkpointer or InMemorySaver(),
+        store=store or InMemoryStore(),
+    )
 
-print("[INFO] Supervisor agent created successfully")
+
+supervisor = build_supervisor()
