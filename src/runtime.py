@@ -69,10 +69,14 @@ def build_start(job: dict, resuming: bool = False) -> tuple[AgentContext, str] |
         context = AgentContext(company_id=job["company_id"], conversation_id=job["thread_id"], job_type="inquiry")
         message = (
             f"New customer inquiry via {payload.get('source', 'web_form')}.\n"
-            f"From: {payload['name']} <{payload['email']}>\nPhone: {payload.get('phone') or 'not provided'}\n\n"
-            f"{payload['message']}"
+            f"From: {payload['name']} <{payload['email']}>\nPhone: {payload.get('phone') or 'not provided'}\n"
         )
-        return context, message
+        if payload.get("subject"):
+            # Gmail only threads a reply whose subject matches the customer's email.
+            subject = payload["subject"]
+            reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+            message += f"Subject: {subject}\nUse exactly this subject for the reply draft: {reply_subject}\n"
+        return context, f"{message}\n{payload['message']}"
 
     if job["kind"] == "retention":
         couple = get_couple_record(payload["contact_id"], job["company_id"])
