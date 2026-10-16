@@ -48,19 +48,25 @@ def current_staff(authorization: str | None = Header(default=None)) -> StaffIden
     return authenticate_staff(authorization)
 
 
+def send_job(job: dict, dedupe_id: str | None = None) -> None:
+    """Hand a recorded job to the FIFO queue (no-op locally when no queue is configured)."""
+    if JOBS_QUEUE_URL:
+        # One message group per thread, so a conversation is never processed concurrently.
+        boto3.client("sqs").send_message(
+            QueueUrl=JOBS_QUEUE_URL,
+            MessageBody=json.dumps({"job_id": job["id"]}),
+            MessageGroupId=job["thread_id"],
+            MessageDeduplicationId=dedupe_id or job["id"],
+        )
+
+
 def queue_job(kind: str, thread_id: str, dedupe_key: str, payload: dict) -> dict:
     """Record the job durably, then hand it to SQS once; duplicates are not re-sent."""
     job, created = database.enqueue_job(
         company_id=COMPANY_ID, kind=kind, thread_id=thread_id, dedupe_key=dedupe_key, payload=payload
     )
-    if created and JOBS_QUEUE_URL:
-        # One message group per thread, so a conversation is never processed concurrently.
-        boto3.client("sqs").send_message(
-            QueueUrl=JOBS_QUEUE_URL,
-            MessageBody=json.dumps({"job_id": job["id"]}),
-            MessageGroupId=thread_id,
-            MessageDeduplicationId=job["id"],
-        )
+    if created:
+        send_job(job)
     return job
 
 
