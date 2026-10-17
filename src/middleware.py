@@ -6,13 +6,15 @@ from langchain.agents.middleware import (
     AgentMiddleware,
     InterruptOnConfig,
     ModelCallLimitMiddleware,
+    ModelRequest,
+    ModelResponse,
     ModelRetryMiddleware,
     ToolCallLimitMiddleware,
     ToolCallRequest,
     ToolErrorMiddleware,
     ToolRetryMiddleware,
 )
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import SystemMessage, ToolMessage
 from langgraph.types import Command
 
 SENSITIVE_PATTERN = re.compile(
@@ -148,12 +150,50 @@ class DeliveryGuardrailMiddleware(AgentMiddleware):
         return await handler(request)
 
 
+class OpenRouterPromptCachingMiddleware(AgentMiddleware):
+    """Mark the system prompt as an OpenRouter cache breakpoint on every model call.
+
+    OpenRouter caches only content blocks carrying `cache_control`; Deep Agents' built-in
+    caching middleware targets native Anthropic/Bedrock models and skips ChatOpenRouter.
+    Deep Agents places custom middleware after its own prompt-building middleware, so the
+    breakpoint covers the full static prompt; per-contact memory is appended after it.
+    """
+
+    def _with_breakpoint(self, request: ModelRequest) -> ModelRequest:
+        message = request.system_message
+        if message is None:
+            return request
+        content = message.content
+        blocks = [{"type": "text", "text": content}] if isinstance(content, str) else [
+            {"type": "text", "text": block} if isinstance(block, str) else dict(block) for block in content
+        ]
+        if not blocks:
+            return request
+        blocks[-1]["cache_control"] = {"type": "ephemeral"}
+        return request.override(system_message=SystemMessage(content=blocks))
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        return handler(self._with_breakpoint(request))
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        return await handler(self._with_breakpoint(request))
+
+
 __all__ = [
     "DELIVERY_INTERRUPT_CONFIG",
     "DeliveryGuardrailMiddleware",
     "GUARDED_DELIVERY_TOOLS",
     "ModelCallLimitMiddleware",
     "ModelRetryMiddleware",
+    "OpenRouterPromptCachingMiddleware",
     "ToolCallLimitMiddleware",
     "ToolErrorMiddleware",
     "ToolRetryMiddleware",
