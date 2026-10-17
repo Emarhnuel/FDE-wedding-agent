@@ -12,7 +12,6 @@ from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
 from deepagents.backends.protocol import WriteResult
 from deepagents.backends.utils import create_file_data
 from langchain.agents.structured_output import ToolStrategy
-from langchain_core.messages import SystemMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.base import BaseStore
@@ -29,7 +28,7 @@ if os.getenv("LANGSMITH_TRACING", "").lower() == "true":
         os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGSMITH_PROJECT")
     print(f"[INFO] LangSmith tracing enabled for project: {os.getenv('LANGSMITH_PROJECT', 'juniper-hollow-agent')}")
 
-from src.models import model1, model2, model3, model4
+from src.models import model1, model4
 from src.prompts import (
     INQUIRY_SYSTEM_PROMPT,
     KNOWLEDGE_RETRIEVER_SYSTEM_PROMPT,
@@ -42,6 +41,7 @@ from src.middleware import (
     DeliveryGuardrailMiddleware,
     ModelCallLimitMiddleware,
     ModelRetryMiddleware,
+    OpenRouterPromptCachingMiddleware,
     ToolCallLimitMiddleware,
     ToolErrorMiddleware,
     ToolRetryMiddleware,
@@ -133,6 +133,7 @@ knowledge_retriever = {
         ),
         ToolErrorMiddleware(on_error=sanitize_tool_error),
         ModelRetryMiddleware(max_retries=3),
+        OpenRouterPromptCachingMiddleware(),
     ],
 }
 
@@ -161,6 +162,7 @@ inquiry_agent = {
         ),
         ToolErrorMiddleware(on_error=sanitize_tool_error),
         ModelRetryMiddleware(max_retries=3),
+        OpenRouterPromptCachingMiddleware(),
     ],
 }
 
@@ -188,21 +190,16 @@ retention_agent = {
         ),
         ToolErrorMiddleware(on_error=sanitize_tool_error),
         ModelRetryMiddleware(max_retries=3),
+        OpenRouterPromptCachingMiddleware(),
     ],
 }
-
-# Supervisor's system prompt is long and identical on every model call across a thread;
-# marking it ephemeral lets OpenRouter cache it after the first call.
-_supervisor_system_message = SystemMessage(
-    content=[{"type": "text", "text": SUPERVISOR_SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
-)
 
 def build_supervisor(checkpointer: BaseCheckpointSaver | None = None, store: BaseStore | None = None):
     """Create the supervisor. interrupt_on requires a checkpointer and /memories/ requires a store;
     runtime.py passes Postgres-backed ones, and the in-memory defaults are for local runs and tests."""
     return create_deep_agent(
-        model=model1,
-        system_prompt=_supervisor_system_message,
+        model=model4,
+        system_prompt=SUPERVISOR_SYSTEM_PROMPT,
         subagents=[knowledge_retriever, inquiry_agent, retention_agent],
         tools=[send_customer_email, send_retention_email, hand_off_to_staff],
         interrupt_on={
@@ -218,6 +215,7 @@ def build_supervisor(checkpointer: BaseCheckpointSaver | None = None, store: Bas
             ModelCallLimitMiddleware(thread_limit=40, run_limit=20, exit_behavior="end"),
             ModelRetryMiddleware(max_retries=2),
             ToolErrorMiddleware(on_error=sanitize_tool_error),
+            OpenRouterPromptCachingMiddleware(),
         ],
         backend=agent_backend,
         checkpointer=checkpointer or InMemorySaver(),
