@@ -11,6 +11,7 @@ from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
 from deepagents.backends.protocol import WriteResult
 from deepagents.backends.utils import create_file_data
+from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import SystemMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
@@ -35,7 +36,7 @@ from src.prompts import (
     RETENTION_SYSTEM_PROMPT,
     SUPERVISOR_SYSTEM_PROMPT,
 )
-from src.schemas import AgentContext
+from src.schemas import AgentContext, InquiryDraft, KnowledgeEvidence, RetentionDraft
 from src.middleware import (
     DELIVERY_INTERRUPT_CONFIG,
     DeliveryGuardrailMiddleware,
@@ -119,6 +120,7 @@ knowledge_retriever = {
     "system_prompt": KNOWLEDGE_RETRIEVER_SYSTEM_PROMPT,
     "tools": [search_company_knowledge],
     "model": model1,
+    "response_format": ToolStrategy(KnowledgeEvidence),
     "middleware": [
         ToolCallLimitMiddleware(
             tool_name="search_company_knowledge",
@@ -144,6 +146,8 @@ inquiry_agent = {
     "system_prompt": INQUIRY_SYSTEM_PROMPT,
     "tools": [get_inquiry_history, save_inquiry_draft],
     "model": model1,
+    # The supervisor must send the saved draft exactly, so it gets exact fields, not prose.
+    "response_format": ToolStrategy(InquiryDraft),
     "interrupt_on": {"save_inquiry_draft": DRAFT_INTERRUPT_CONFIG},
     "middleware": [
         ToolCallLimitMiddleware(
@@ -170,6 +174,7 @@ retention_agent = {
     "system_prompt": RETENTION_SYSTEM_PROMPT,
     "tools": [get_couple_history, save_retention_draft],
     "model": model1,
+    "response_format": ToolStrategy(RetentionDraft),
     "interrupt_on": {"save_retention_draft": DRAFT_INTERRUPT_CONFIG},
     "middleware": [
         ToolCallLimitMiddleware(
