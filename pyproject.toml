@@ -23,6 +23,7 @@ dependencies = [
     "langgraph-checkpoint-postgres==3.2.0",
     "psycopg[binary,pool]==3.3.6",
     "bedrock-agentcore==1.24.1",
+    "python-multipart==0.0.32",
 ]
 
 [dependency-groups]
