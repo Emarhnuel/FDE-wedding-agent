@@ -1,4 +1,5 @@
 import os
+import threading
 from functools import cache
 from pathlib import Path
 
@@ -15,10 +16,13 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 EMBEDDING_MODEL = "google/gemini-embedding-2"
 EMBEDDING_DIMENSIONS = 768
-CHROMA_DIRECTORY = ".data/chroma"
+# Anchored to the project root so the index is found whatever folder the process starts in.
+CHROMA_DIRECTORY = str(Path(__file__).resolve().parent.parent / ".data" / "chroma")
 CHROMA_COLLECTION = "juniper_knowledge"
 
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+# Parallel tool calls must not open the Chroma client concurrently; Chroma's setup is not thread-safe.
+_vector_store_lock = threading.Lock()
 
 
 def prepare_query(question: str) -> str:
@@ -92,7 +96,9 @@ def index_document(
         }
         for chunk in chunks
     ]
-    get_vector_store().add_texts(
+    with _vector_store_lock:
+        store = get_vector_store()
+    store.add_texts(
         ids=ids,
         texts=[prepare_document(chunk.page_content, title or source_id) for chunk in chunks],
         metadatas=metadatas,
@@ -101,7 +107,9 @@ def index_document(
 
 
 def search_knowledge(query: str, company_id: str, k: int = 4) -> list[Document]:
-    return get_vector_store().similarity_search(
+    with _vector_store_lock:
+        store = get_vector_store()
+    return store.similarity_search(
         prepare_query(query),
         k=k,
         filter={"$and": [{"company_id": company_id}, {"status": "published"}]},
