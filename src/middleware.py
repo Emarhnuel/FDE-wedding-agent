@@ -9,6 +9,7 @@ from langchain.agents.middleware import (
     ModelRequest,
     ModelResponse,
     ModelRetryMiddleware,
+    PIIMiddleware,
     ToolCallLimitMiddleware,
     ToolCallRequest,
     ToolErrorMiddleware,
@@ -16,6 +17,7 @@ from langchain.agents.middleware import (
 )
 from langchain_core.messages import SystemMessage, ToolMessage
 from langgraph.types import Command
+from langsmith.anonymizer import create_anonymizer
 
 SENSITIVE_PATTERN = re.compile(
     r"(\$\s?\d|"
@@ -187,6 +189,45 @@ class OpenRouterPromptCachingMiddleware(AgentMiddleware):
         return await handler(self._with_breakpoint(request))
 
 
+# Payment and identity numbers the venue never needs from an email. Labeled patterns require
+# a digit, so ordinary words after "account" or "passport" are left alone.
+SENSITIVE_NUMBER_PATTERNS = {
+    "ssn": r"\b\d{3}-\d{2}-\d{4}\b",
+    "iban": r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?\b",
+    "bank_account": r"(?i)\b(?:account|acct|routing|aba|sort code)(?: number| no\.?| #)?[\s:#]*\d[\d -]{5,20}\d\b",
+    "id_document": (
+        r"(?i)\b(?:passport|driver'?s? licen[cs]e|national id|id card)(?: number| no\.?| #)?[\s:#]*"
+        r"(?=[A-Z0-9-]*\d)[A-Z0-9][A-Z0-9-]{4,19}\b"
+    ),
+}
+
+
+def build_pii_middleware() -> list[PIIMiddleware]:
+    """Redact card, bank, and ID numbers in the customer message before any model sees them.
+
+    Redaction rewrites the stored message, so the numbers never reach the model provider,
+    the checkpoints, or the subagents. Names, emails, phones, and dates are kept: the agent
+    needs them to reply.
+    """
+    return [
+        PIIMiddleware("credit_card", strategy="redact"),
+        *(PIIMiddleware(name, detector=pattern, strategy="redact") for name, pattern in SENSITIVE_NUMBER_PATTERNS.items()),
+    ]
+
+
+# Customer contact details and sensitive numbers are masked in LangSmith traces only;
+# the agent itself still works with the real values.
+# Rules apply in order: the specific number patterns run before the generic card pattern.
+TRACE_ANONYMIZER = create_anonymizer(
+    [
+        *({"pattern": re.compile(pattern), "replace": f"[{name.upper()}]"} for name, pattern in SENSITIVE_NUMBER_PATTERNS.items()),
+        {"pattern": re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "replace": "[EMAIL]"},
+        {"pattern": re.compile(r"(?<!\d)(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]?\d{4}(?!\d)"), "replace": "[PHONE]"},
+        {"pattern": re.compile(r"\b(?:\d[ -]?){12,18}\d\b"), "replace": "[CARD]"},
+    ]
+)
+
+
 __all__ = [
     "DELIVERY_INTERRUPT_CONFIG",
     "DeliveryGuardrailMiddleware",
@@ -194,9 +235,12 @@ __all__ = [
     "ModelCallLimitMiddleware",
     "ModelRetryMiddleware",
     "OpenRouterPromptCachingMiddleware",
+    "SENSITIVE_NUMBER_PATTERNS",
+    "TRACE_ANONYMIZER",
     "ToolCallLimitMiddleware",
     "ToolErrorMiddleware",
     "ToolRetryMiddleware",
+    "build_pii_middleware",
     "requires_human_review",
     "sanitize_tool_error",
     "should_interrupt_delivery",
