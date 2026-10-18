@@ -11,7 +11,7 @@ load_dotenv()
 model1 = ChatOpenRouter(
     model="mistralai/mistral-large-4-0",
     temperature=0.0,
-    max_tokens=100_000,
+    max_tokens=60000,
     streaming=False,
     reasoning={"effort": "high", "summary": "auto"},
     openrouter_provider={"data_collection": "deny"},
@@ -21,7 +21,7 @@ model1 = ChatOpenRouter(
 model2 = ChatOpenRouter(
     model="anthropic/claude-sonnet-5.5",
     temperature=0.0,
-    max_tokens=100_000,
+    max_tokens=60000,
     streaming=False,
     reasoning={"effort": "high", "summary": "auto"},
     openrouter_provider={"data_collection": "deny"},
@@ -31,17 +31,17 @@ model2 = ChatOpenRouter(
 model3 = ChatOpenRouter(
     model="xiaomi/mimo-v2.6-pro",
     temperature=0.0,
-    max_tokens=100_000,
+    max_tokens=60000,
     streaming=False,
     reasoning={"effort": "high", "summary": "auto"},
     openrouter_provider={"data_collection": "deny"},
 )
 
-# Model 4: Google Gemini 4 Argon (max output 65,536, so it cannot take 100,000)
+# Model 4: Google Gemini 4 Argon 
 model4 = ChatOpenRouter(
     model="google/gemini-4-argon",
     temperature=0.0,
-    max_tokens=65_536,
+    max_tokens=60036,
     streaming=False,
     reasoning={"effort": "high", "summary": "auto"},
     openrouter_provider={"data_collection": "deny"},
