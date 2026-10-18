@@ -1,7 +1,7 @@
 """FastAPI web API: public inquiry intake and authenticated staff review of paused agent actions.
 
 The API never runs the agent. It validates, records decisions, and queues jobs; the AgentCore
-runtime does the long work. When the Deep Agents supervisor pauses at an `interrupt_on` tool
+runtime does the long work (locally, RUN_JOBS_LOCALLY=true runs queued jobs in-process instead). When the Deep Agents supervisor pauses at an `interrupt_on` tool
 (save_*_draft or send_*), the runtime stores one `agent_reviews` row per paused action. Staff
 decide here, and once every action of that interrupt is decided a `resume` job is queued so the
 runtime can resume the same thread with the stored decisions.
@@ -10,24 +10,28 @@ runtime can resume the same thread with the stored decisions.
 import hashlib
 import json
 import os
+import threading
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
 
 import boto3
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from mangum import Mangum
 from pydantic import BaseModel, Field
 
 from . import database
-from .security.auth import AuthError, StaffIdentity, authenticate_staff
+from .security.auth import AuthError, StaffIdentity, authenticate_staff, sign_in
 from .security.permissions import Action, authorize
 
 # Trusted server configuration; never taken from request payloads.
 COMPANY_ID = os.environ.get("COMPANY_ID", "juniper-hollow")
 JOBS_QUEUE_URL = os.environ.get("JOBS_QUEUE_URL", "")
+# Local development only: with no SQS queue or AgentCore, run each queued job in this process.
+RUN_JOBS_LOCALLY = os.environ.get("RUN_JOBS_LOCALLY", "").lower() == "true"
 ALLOWED_ORIGINS = [o for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000").split(",") if o]
 
 app = FastAPI(title="Juniper Hollow Agent API")
@@ -44,12 +48,16 @@ def auth_error_handler(_request, exc: AuthError) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
 
 
-def current_staff(authorization: str | None = Header(default=None)) -> StaffIdentity:
-    return authenticate_staff(authorization)
+# Adds Swagger's Authorize button, which signs in through POST /auth/login.
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
+
+
+def current_staff(token: str | None = Depends(oauth2_scheme)) -> StaffIdentity:
+    return authenticate_staff(f"Bearer {token}" if token else None)
 
 
 def send_job(job: dict, dedupe_id: str | None = None) -> None:
-    """Hand a recorded job to the FIFO queue (no-op locally when no queue is configured)."""
+    """Hand a recorded job to the FIFO queue, or run it in-process when RUN_JOBS_LOCALLY is set."""
     if JOBS_QUEUE_URL:
         # One message group per thread, so a conversation is never processed concurrently.
         boto3.client("sqs").send_message(
@@ -58,6 +66,10 @@ def send_job(job: dict, dedupe_id: str | None = None) -> None:
             MessageGroupId=job["thread_id"],
             MessageDeduplicationId=dedupe_id or job["id"],
         )
+    elif RUN_JOBS_LOCALLY:
+        from .runtime import run_job  # Imported here so the deployed API never loads the agent.
+
+        threading.Thread(target=run_job, args=(job["id"],), daemon=True).start()
 
 
 def queue_job(kind: str, thread_id: str, dedupe_key: str, payload: dict) -> dict:
@@ -84,6 +96,12 @@ class InquiryIn(BaseModel):
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.post("/auth/login")
+def login(form: OAuth2PasswordRequestForm = Depends()) -> dict:
+    """Sign in with staff email (as username) and password; returns an InsForge access token."""
+    return {"access_token": sign_in(form.username, form.password), "token_type": "bearer"}
 
 
 @app.post("/inquiries", status_code=202)
