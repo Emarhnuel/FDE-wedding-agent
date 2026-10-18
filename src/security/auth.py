@@ -8,6 +8,7 @@ import httpx
 from .. import database
 
 SESSION_PATH = "/api/auth/sessions/current"
+SIGN_IN_PATH = "/api/auth/sessions"
 
 
 class AuthError(Exception):
@@ -70,6 +71,33 @@ def verify_insforge_session(token: str) -> dict[str, Any]:
     if not user.get("id") or user.get("role", "authenticated") != "authenticated":
         raise AuthError(401, "Token does not belong to an authenticated user.")
     return user
+
+
+def sign_in(email: str, password: str) -> str:
+    """Exchange an email and password for an InsForge access token, or raise AuthError.
+
+    This proves identity only; staff membership and roles are checked on every protected request.
+    """
+    if not database.INSFORGE_URL:
+        raise AuthError(503, "Authentication service is not configured.")
+    try:
+        response = httpx.post(
+            f"{database.INSFORGE_URL}{SIGN_IN_PATH}",
+            params={"client_type": "server"},
+            json={"method": "password", "email": email, "password": password},
+            timeout=10.0,
+        )
+    except httpx.HTTPError as exc:
+        raise AuthError(503, "Authentication service is unavailable.") from exc
+    if response.status_code in (400, 401, 403, 404):
+        raise AuthError(401, "Invalid email or password.")
+    try:
+        token = response.json().get("accessToken") if response.status_code == 200 else None
+    except ValueError:
+        token = None
+    if not token:
+        raise AuthError(503, "Authentication service returned an unexpected response.")
+    return token
 
 
 def resolve_staff_membership(insforge_user_id: str) -> dict[str, Any]:
