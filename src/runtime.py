@@ -47,6 +47,8 @@ def get_agent():
                 pool = ConnectionPool(
                     DATABASE_URL,
                     kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+                    # The database closes idle connections; test each one and reconnect if it died.
+                    check=ConnectionPool.check_connection,
                     open=True,
                 )
                 checkpointer, store = PostgresSaver(pool), PostgresStore(pool)
