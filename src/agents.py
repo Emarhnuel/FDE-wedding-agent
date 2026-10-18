@@ -16,17 +16,10 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.base import BaseStore
 from langgraph.store.memory import InMemoryStore
+from langsmith import Client, configure
 
 # Load environment variables
 load_dotenv()
-
-# Configure LangSmith tracing (reads from env vars automatically)
-# Set LANGSMITH_TRACING=true and LANGSMITH_API_KEY in .env to enable
-if os.getenv("LANGSMITH_TRACING", "").lower() == "true":
-    os.environ["LANGCHAIN_TRACING_V2"] = "true"
-    if os.getenv("LANGSMITH_PROJECT"):
-        os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGSMITH_PROJECT")
-    print(f"[INFO] LangSmith tracing enabled for project: {os.getenv('LANGSMITH_PROJECT', 'juniper-hollow-agent')}")
 
 from src.models import model1, model4
 from src.prompts import (
@@ -42,15 +35,27 @@ from src.middleware import (
     ModelCallLimitMiddleware,
     ModelRetryMiddleware,
     OpenRouterPromptCachingMiddleware,
+    TRACE_ANONYMIZER,
     ToolCallLimitMiddleware,
     ToolErrorMiddleware,
     ToolRetryMiddleware,
+    build_pii_middleware,
     sanitize_tool_error,
 )
 from src.tools.inquiry_tools import get_inquiry_history, save_inquiry_draft
 from src.tools.knowledge_tools import search_company_knowledge
 from src.tools.retention_tools import get_couple_history, save_retention_draft
 from src.tools.supervisor_tools import hand_off_to_staff, send_customer_email, send_retention_email
+
+# Configure LangSmith tracing (reads from env vars automatically)
+# Set LANGSMITH_TRACING=true and LANGSMITH_API_KEY in .env to enable
+if os.getenv("LANGSMITH_TRACING", "").lower() == "true":
+    os.environ["LANGCHAIN_TRACING_V2"] = "true"
+    if os.getenv("LANGSMITH_PROJECT"):
+        os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGSMITH_PROJECT")
+    # Traces leave our system, so customer contact details and sensitive numbers are masked first.
+    configure(client=Client(anonymizer=TRACE_ANONYMIZER))
+    print(f"[INFO] LangSmith tracing enabled for project: {os.getenv('LANGSMITH_PROJECT', 'juniper-hollow-agent')}")
 
 # Staff review every draft before it is saved, in addition to the guarded send tools.
 DRAFT_INTERRUPT_CONFIG = {"allowed_decisions": ["approve", "edit", "reject"]}
@@ -211,6 +216,7 @@ def build_supervisor(checkpointer: BaseCheckpointSaver | None = None, store: Bas
         memory=MEMORY_FILES,
         context_schema=AgentContext,
         middleware=[
+            *build_pii_middleware(),
             DeliveryGuardrailMiddleware(),
             ModelCallLimitMiddleware(thread_limit=40, run_limit=20, exit_behavior="end"),
             ModelRetryMiddleware(max_retries=2),
