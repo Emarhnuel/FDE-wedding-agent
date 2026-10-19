@@ -29,21 +29,17 @@ MAX_REVIEW_ROUNDS = 8
 
 
 @pytest.fixture(scope="module")
-def supervisor(tmp_path_factory: pytest.TempPathFactory):
+def supervisor():
     assert RECIPIENT, "Set TEST_EMAIL_RECIPIENT or GMAIL_SENDER in .env"
     database.init_schema()
 
-    # Publish the knowledge pack for this test company, in an isolated Chroma collection.
-    rag.CHROMA_DIRECTORY = str(tmp_path_factory.mktemp("chroma_supervisor_test"))
-    rag.CHROMA_COLLECTION = "juniper_knowledge_supervisor_test"
-    rag.get_vector_store.cache_clear()
+    # Publish the knowledge pack for this test company only.
     rag.index_document(
         PDF_PATH,
         company_id=COMPANY_ID,
         source_id=SOURCE_ID,
         version=SOURCE_VERSION,
         title="Juniper Hollow Company Knowledge Pack",
-        status="published",
     )
     database.insert_record(
         "documents",
@@ -57,8 +53,7 @@ def supervisor(tmp_path_factory: pytest.TempPathFactory):
 
     yield agent
 
-    rag.get_vector_store.cache_clear()
-    for table in ("email_drafts", "couples", "documents", "audit_logs"):
+    for table in ("email_drafts", "couples", "documents", "audit_logs", "knowledge_chunks"):
         database.run_raw_sql(f"DELETE FROM {table} WHERE company_id LIKE 'test-supervisor-%';")
     if not preexisting_contact and (contact := find_hubspot_contact_by_email(RECIPIENT)):
         httpx.delete(
