@@ -1,4 +1,4 @@
-"""Role-based authorization checks for email review and knowledge management."""
+"""Role-based authorization checks for email review, knowledge management, and staff administration."""
 
 from enum import StrEnum
 
@@ -6,6 +6,7 @@ from .auth import AuthError, StaffIdentity
 
 EMAIL_APPROVER = "email_approver"
 KNOWLEDGE_MANAGER = "knowledge_manager"
+STAFF_ADMIN = "staff_admin"
 
 
 class Action(StrEnum):
@@ -20,9 +21,11 @@ class Action(StrEnum):
     REPLACE_DOCUMENT = "replace_document"
     PUBLISH_DOCUMENT = "publish_document"
     ROLLBACK_DOCUMENT = "rollback_document"
+    VIEW_STAFF = "view_staff"
+    MANAGE_STAFF = "manage_staff"
 
 
-# The two roles are independent: holding one never implies the other. Unknown roles grant nothing.
+# The roles are independent: holding one never implies another. Unknown roles grant nothing.
 ROLE_PERMISSIONS: dict[str, frozenset[Action]] = {
     EMAIL_APPROVER: frozenset(
         {Action.VIEW_DRAFTS, Action.APPROVE_DRAFT, Action.EDIT_DRAFT, Action.REJECT_DRAFT}
@@ -36,6 +39,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Action]] = {
             Action.ROLLBACK_DOCUMENT,
         }
     ),
+    STAFF_ADMIN: frozenset({Action.VIEW_STAFF, Action.MANAGE_STAFF}),
 }
 
 
