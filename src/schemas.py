@@ -42,16 +42,16 @@ class InquiryDraft(BaseModel):
 
     draft_id: str | None = Field(description="draft_id from the confirmed save_inquiry_draft result; null if not saved")
     status: Literal["pending_review", "drafted", "not_saved"] = Field(
-        description="Status from the confirmed save result, or not_saved if staff rejected the save or it failed"
+        description="Status from the confirmed save result, or not_saved if the save failed"
     )
     recipient: str = Field(description="Customer email address exactly as saved")
-    subject: str = Field(default="", description="Subject exactly as saved, including staff edits")
-    body: str = Field(default="", description="Email body exactly as saved, including staff edits")
+    subject: str = Field(default="", description="Subject exactly as saved")
+    body: str = Field(default="", description="Email body exactly as saved")
     sources: list[SourceCitation] = Field(default_factory=list, description="Approved sources supporting the draft")
     requires_review: bool = Field(description="requires_review value reported by the save result")
     review_reasons: list[str] = Field(default_factory=list, description="Reasons staff review is required")
     unresolved_questions: list[str] = Field(
-        default_factory=list, description="Evidence gaps, staff rejection messages, or questions for staff follow-up"
+        default_factory=list, description="Evidence gaps, save errors, or questions for staff follow-up"
     )
 
 
