@@ -18,6 +18,8 @@ EMBEDDING_MODEL = "google/gemini-embedding-2"
 EMBEDDING_DIMENSIONS = 768
 # Anchored to the project root so the index is found whatever folder the process starts in.
 CHROMA_DIRECTORY = str(Path(__file__).resolve().parent.parent / ".data" / "chroma")
+# Private originals of uploaded knowledge files (the S3 knowledge bucket once deployed).
+UPLOAD_DIRECTORY = Path(__file__).resolve().parent.parent / ".data" / "uploads"
 CHROMA_COLLECTION = "juniper_knowledge"
 
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
@@ -104,6 +106,20 @@ def index_document(
         metadatas=metadatas,
     )
     return len(chunks)
+
+
+def set_version_status(company_id: str, source_id: str, version: str, status: str) -> int:
+    """Set the status of every chunk of one document version; search only returns "published"."""
+    with _vector_store_lock:
+        store = get_vector_store()
+    found = store.get(
+        where={"$and": [{"company_id": company_id}, {"source_id": source_id}, {"version": version}]},
+        include=["metadatas"],
+    )
+    if found["ids"]:
+        # Metadata-only update on the Chroma collection, so chunks are not re-embedded.
+        store._collection.update(ids=found["ids"], metadatas=[{**m, "status": status} for m in found["metadatas"]])
+    return len(found["ids"])
 
 
 def search_knowledge(query: str, company_id: str, k: int = 4) -> list[Document]:
