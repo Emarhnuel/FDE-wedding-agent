@@ -10,7 +10,7 @@ A **Forward Deployed AI Engineering** course project: turning a vague Upwork bri
 |---|---|
 | 📬 **Inquiry agent** | Answers routine questions instantly using approved venue knowledge |
 | ✋ **Human-in-the-loop** | Pricing, date holds, refunds, contracts, complaints → always escalated to staff |
-| 🧠 **Agentic RAG** | The agent decides *when* to search ChromaDB — Google `gemini-embedding-2` via OpenRouter |
+| 🧠 **Agentic RAG** | The agent decides *when* to search the knowledge base (pgvector in Postgres) — Google `gemini-embedding-2` via OpenRouter |
 | 💌 **Retention agent** | Re-engages past couples for referrals & anniversaries (consent-gated) |
 | 🔐 **Staff auth** | InsForge login + role-based review workflows |
 | 🕵️ **Observability** | LangSmith tracing & evaluation on every run |
@@ -18,7 +18,7 @@ A **Forward Deployed AI Engineering** course project: turning a vague Upwork bri
 ## 🏗️ Stack
 
 **Agents:** Deep Agents (`create_deep_agent`) — supervisor + inquiry + retention subagents  
-**Retrieval:** ChromaDB · Gemini Embedding 2 via OpenRouter · published-source filtering  
+**Retrieval:** pgvector (InsForge Postgres) · Gemini Embedding 2 via OpenRouter · published-source filtering  
 **Comms:** Gmail API · HubSpot CRM  
 **Infra:** AWS Bedrock AgentCore · Lambda · API Gateway · SQS · EventBridge Scheduler · PostgreSQL · S3 · Secrets Manager — all Terraform  
 **Frontend:** Inquiry form + staff portal on AWS Amplify Hosting (default AWS domain, no CloudFront)  
@@ -31,7 +31,7 @@ A **Forward Deployed AI Engineering** course project: turning a vague Upwork bri
 src/
 ├── agents.py      # Deep Agents: supervisor + subagents, memory & approval wiring
 ├── prompts.py     # XML-structured system prompts (the agents' personalities)
-├── rag.py         # load → split → embed → Chroma → search
+├── rag.py         # load → split → embed → pgvector → search
 ├── api.py         # FastAPI entry: inquiry form + staff approval endpoints
 ├── worker.py      # SQS consumer → AgentCore
 ├── runtime.py     # AgentCore runtime entrypoint
