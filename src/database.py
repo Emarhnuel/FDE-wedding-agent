@@ -70,6 +70,23 @@ CREATE TABLE IF NOT EXISTS documents (
     UNIQUE (company_id, source_id, version)
 );
 
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- RAG chunks. Searchable only while their documents row is 'published' (see rag.search_knowledge).
+-- No ANN index yet: exact search is fast at this size, and a filtered HNSW scan can return too few rows.
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    version TEXT NOT NULL,
+    venue TEXT NOT NULL DEFAULT '',
+    filename TEXT NOT NULL,
+    page INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    embedding vector(768) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS audit_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id TEXT NOT NULL DEFAULT 'juniper-hollow',
