@@ -7,6 +7,7 @@ Every step uses live services and no mocks:
 
 Only the AWS hops are skipped: with no JOBS_QUEUE_URL the API records jobs without SQS, and the test
 calls `run_job` directly where the worker would invoke AgentCore. Costs model tokens and sends real email.
+Inquiry replies pause once, at the send step, unless AUTO_SEND_ROUTINE lets a routine reply go out.
 """
 
 import os
@@ -18,7 +19,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from src import api, cron, database, rag, runtime
+from src import api, cron, database, middleware, rag, runtime
 from src.tools.inquiry_tools import HUBSPOT_BASE_URL, _hubspot_headers, find_hubspot_contact_by_email
 from src.tools.supervisor_tools import get_gmail_access_token
 
@@ -40,9 +41,11 @@ def client(tmp_path_factory: pytest.TempPathFactory):
     assert os.environ.get("DATABASE_URL"), "Set DATABASE_URL so paused runs persist in Postgres"
     database.init_schema()
 
-    # Trusted server config points at the throwaway company; no SQS locally.
+    # Trusted server config points at the throwaway company; no SQS, and the test runs each job itself.
     api.COMPANY_ID = cron.COMPANY_ID = COMPANY_ID
     api.JOBS_QUEUE_URL = ""
+    api.RUN_JOBS_LOCALLY = False
+    middleware.AUTO_SEND_ROUTINE = False
 
     rag.CHROMA_DIRECTORY = str(tmp_path_factory.mktemp("chroma_e2e"))
     rag.CHROMA_COLLECTION = "juniper_knowledge_e2e"
@@ -55,23 +58,22 @@ def client(tmp_path_factory: pytest.TempPathFactory):
         "documents", {"company_id": COMPANY_ID, "source_id": SOURCE_ID, "version": SOURCE_VERSION, "status": "published"}
     )
 
-    tag = uuid4().hex[:8]
+    email, password = f"approver.{uuid4().hex[:8]}@juniperhollow-test.com", f"Test-{uuid4().hex}"
     created = httpx.post(
         f"{database.INSFORGE_URL}/api/auth/users", params={"client_type": "server"}, headers=_admin_headers(),
-        json={"email": f"approver.{tag}@juniperhollow-test.com", "password": f"Test-{uuid4().hex}", "name": "E2E Approver"},
-        timeout=15.0,
+        json={"email": email, "password": password, "name": "E2E Approver"}, timeout=15.0,
     )
     assert created.status_code in (200, 201), f"Could not create staff login: {created.status_code} {created.text}"
     user = created.json()
     database.insert_record(
         "staff_members",
         {"insforge_user_id": user["user"]["id"], "company_id": COMPANY_ID,
-         "email": f"approver.{tag}@juniperhollow-test.com", "full_name": "E2E Approver", "roles": ["email_approver"]},
+         "email": email, "full_name": "E2E Approver", "roles": ["email_approver"]},
     )
     preexisting_contact = find_hubspot_contact_by_email(RECIPIENT)
 
     test_client = TestClient(api.app)
-    test_client.headers["Authorization"] = f"Bearer {user['accessToken']}"
+    test_client.staff_login = {"username": email, "password": password}
     try:
         yield test_client
     finally:
@@ -108,6 +110,10 @@ def run_with_staff(client: TestClient, job_id: str, decide) -> list[dict]:
             return seen
         assert status == "awaiting_review", f"Job ended as {status}: {job(job_id).get('last_error')}"
 
+        # Staff logins last 15 minutes and agent runs can take longer, so sign in fresh each round.
+        login = client.post("/auth/login", data=client.staff_login)
+        assert login.status_code == 200, login.text
+        client.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
         pending = [r for r in client.get("/reviews").json() if r["thread_id"] == thread_id]
         assert pending, "Job paused but the review queue is empty"
         resume_job_id = None
@@ -159,13 +165,14 @@ def submit(client: TestClient, message: str) -> str:
     return response.json()["job_id"]
 
 
-def test_routine_web_inquiry_is_reviewed_and_sent(client):
+def test_routine_web_inquiry_is_reviewed_once_and_sent(client):
     job_id = submit(client, f"Hi! Do you have Wi-Fi for guests, and is there parking on site? [{uuid4().hex[:6]}]")
     thread_id = job(job_id)["thread_id"]
 
     reviews = run_with_staff(client, job_id, approve)
 
-    assert "save_inquiry_draft" in [r["action_name"] for r in reviews], "Drafting must pause for staff review"
+    # With automatic sending off, the single review is at the send step.
+    assert [r["action_name"] for r in reviews] == ["send_customer_email"]
     sent = [d for d in drafts(thread_id) if d["status"] == "sent"]
     assert len(sent) == 1, f"Draft statuses: {[d['status'] for d in drafts(thread_id)]}"
     assert "review_approve" in {row["action"] for row in database.query_records(
@@ -173,7 +180,23 @@ def test_routine_web_inquiry_is_reviewed_and_sent(client):
     assert_really_sent(sent[0])
 
 
-def test_pricing_inquiry_is_held_until_staff_approve_the_send(client):
+def test_routine_reply_backed_by_sources_sends_itself_when_auto_send_is_on(client, monkeypatch):
+    monkeypatch.setattr(middleware, "AUTO_SEND_ROUTINE", True)
+    job_id = submit(client, f"Hello, is there Wi-Fi at the Glasshouse? [{uuid4().hex[:6]}]")
+    thread_id = job(job_id)["thread_id"]
+
+    reviews = run_with_staff(client, job_id, approve)
+
+    assert reviews == [], "A routine, source-backed reply must not wait for staff"
+    sent = [d for d in drafts(thread_id) if d["status"] == "sent"]
+    assert len(sent) == 1 and sent[0]["sources"] and not sent[0]["requires_review"]
+    assert not sent[0]["reviewed_by"]
+    assert_really_sent(sent[0])
+
+
+def test_pricing_inquiry_is_held_until_staff_approve_the_send(client, monkeypatch):
+    # Automatic sending is on, yet a restricted topic must still wait for staff.
+    monkeypatch.setattr(middleware, "AUTO_SEND_ROUTINE", True)
     job_id = submit(client, "What is the Saturday price for the barn in October 2027, and can you hold Oct 16 for us?")
     thread_id = job(job_id)["thread_id"]
     held: list[dict] = []
