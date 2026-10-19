@@ -328,7 +328,7 @@ def upload_document(
     staff: StaffIdentity = Depends(current_staff),
 ) -> dict:
     """Upload and index a knowledge file as a new version that is not live until published ("ready")."""
-    from . import rag  # Loaded only here: indexing pulls in Chroma and the embedding client.
+    from . import rag  # Loaded only here: indexing pulls in the PDF reader and embedding client.
 
     existing = database.query_records("documents", company_id=f"eq.{staff.company_id}", source_id=f"eq.{source_id}")
     # A new version of a known document is a replacement.
@@ -355,10 +355,9 @@ def upload_document(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
     try:
-        # Indexed as "staged": invisible to the agent until a knowledge manager publishes it.
+        # Invisible to the agent until a knowledge manager publishes this version.
         chunks = rag.index_document(
             path, company_id=staff.company_id, source_id=source_id, version=version, title=title, venue=venue,
-            status="staged",
         )
     except Exception as exc:
         path.unlink(missing_ok=True)
@@ -379,8 +378,6 @@ def upload_document(
 
 def activate_version(document_id: str, staff: StaffIdentity, action: Action, from_status: str) -> dict:
     """Make one version the live version of its document; the previous live version becomes superseded."""
-    from . import rag
-
     rows = database.query_records("documents", id=f"eq.{document_id}", limit=1)
     if not rows:
         raise HTTPException(404, "Document not found.")
@@ -390,22 +387,24 @@ def activate_version(document_id: str, staff: StaffIdentity, action: Action, fro
         raise HTTPException(409, f"This version is '{document['status']}'; only a '{from_status}' version qualifies.")
 
     company_id, source_id = document["company_id"], document["source_id"]
-    live = database.query_records("documents", company_id=f"eq.{company_id}", source_id=f"eq.{source_id}", status="eq.published")
-    # Search switches first. If the database update then fails, the database still names the old
-    # version as published, so drafts citing the new one are blocked at send time, never mis-sent.
-    rag.set_version_status(company_id, source_id, document["version"], "published")
-    for old in live:
-        rag.set_version_status(company_id, source_id, old["version"], "superseded")
-        database.update_records("documents", {"status": "superseded"}, id=f"eq.{old['id']}")
-    published = database.update_records(
-        "documents", {"status": "published", "published_at": datetime.now(UTC).isoformat()}, id=f"eq.{document_id}"
-    )[0]
+    # One statement swaps the live version, so search never sees two live versions or none. It changes
+    # nothing unless the target is still in from_status, so a concurrent change cannot strand the document.
+    changed = database.run_raw_sql(
+        "UPDATE documents SET status = CASE WHEN id = $1 THEN 'published' ELSE 'superseded' END, "
+        "published_at = CASE WHEN id = $1 THEN now() ELSE published_at END "
+        "WHERE company_id = $2 AND source_id = $3 AND (status = 'published' OR id = $1) "
+        "AND EXISTS (SELECT 1 FROM documents WHERE id = $1 AND status = $4) "
+        "RETURNING id::text, version, status, published_at;",
+        [document_id, company_id, source_id, from_status],
+    )["rows"]
+    if not any(row["id"] == document_id for row in changed):
+        raise HTTPException(409, "This version was changed by someone else; reload and try again.")
     database.log_audit_event(
         company_id=company_id, actor_id=staff.staff_id, action=action.value, target_type="document",
         target_id=document_id, details={"source_id": source_id, "version": document["version"],
-                                        "replaced_versions": [old["version"] for old in live]},
+                                        "replaced_versions": [row["version"] for row in changed if row["id"] != document_id]},
     )
-    return published
+    return {**document, **next(row for row in changed if row["id"] == document_id)}
 
 
 @app.post("/documents/{document_id}/publish")
