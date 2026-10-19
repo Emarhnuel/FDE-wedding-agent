@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Staff Login | Juniper Hollow Weddings &amp; Events</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="top-ribbon">
+    Juniper Hollow Team Portal <span>&bull;</span> Staff Access Only
+  </div>
+
+  <header class="site-header">
+    <div class="nav-container">
+      <a href="index.html" class="brand-logo">
+        <span class="brand-title">Juniper Hollow</span>
+        <span class="brand-subtitle">Weddings &amp; Events</span>
+      </a>
+
+      <nav aria-label="Primary Navigation">
+        <ul class="nav-links">
+          <li><a href="index.html">Home</a></li>
+          <li><a href="venues.html">Our Venues</a></li>
+          <li><a href="contact.html">Contact Us</a></li>
+          <li><a href="login.html" class="active">Staff Login</a></li>
+        </ul>
+      </nav>
+
+      <div class="nav-actions">
+        <a href="contact.html" class="btn btn-primary">Contact Us</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="auth-stage">
+    <div class="auth-shell">
+      <!-- STEP 1: "Are you a staff member?" Gate -->
+      <div id="staff-gate-panel">
+        <span class="eyebrow">Team Access Check</span>
+        <h1 class="heading-md" style="font-size: 2.2rem;">Are you a Juniper Hollow staff member?</h1>
+        <p style="color: var(--ink-muted); font-size: 0.95rem; margin-top: 0.65rem;">
+          This sign-in page is only for Juniper Hollow staff members. If you are a couple or guest planning a wedding, no account is needed.
+        </p>
+
+        <div class="gate-choice-grid">
+          <button type="button" id="btn-staff-yes" class="gate-choice-card primary-choice">
+            <span class="choice-eyebrow">Team Member</span>
+            <div>
+              <div class="choice-title">Yes, I am staff</div>
+              <p class="choice-desc" style="margin-top: 0.35rem;">
+                Open the staff sign-in form.
+              </p>
+            </div>
+          </button>
+
+          <button type="button" id="btn-staff-no" class="gate-choice-card">
+            <span class="choice-eyebrow">Couple or Guest</span>
+            <div>
+              <div class="choice-title">No, take me back</div>
+              <p class="choice-desc" style="margin-top: 0.35rem;">
+                Return to the Juniper Hollow home page.
+              </p>
+            </div>
+          </button>
+        </div>
+
+        <div style="margin-top: 1.75rem; padding-top: 1.25rem; border-top: 1px solid var(--hairline); display: flex; justify-content: space-between; align-items: center; font-size: 0.86rem; color: var(--ink-muted);">
+          <span>Looking to ask a question or book a tour?</span>
+          <a href="contact.html" style="color: var(--juniper-deep); font-weight: 600;">Contact Us &rarr;</a>
+        </div>
+      </div>
+
+      <!-- STEP 2: Staff Login Form (revealed only when "Yes" is clicked) -->
+      <div id="staff-login-panel" class="hidden-panel">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+          <span class="eyebrow" style="margin-bottom: 0;">Juniper Hollow Staff Portal</span>
+          <button type="button" id="btn-back-to-gate" class="btn btn-ghost" style="font-size: 0.76rem; padding: 0.35rem 0.65rem;">
+            &larr; Back
+          </button>
+        </div>
+
+        <h2 class="heading-md" style="font-size: 2.15rem;">Staff Sign In</h2>
+        <p style="color: var(--ink-muted); font-size: 0.93rem; margin-top: 0.45rem; margin-bottom: 1.75rem;">
+          Enter your Juniper Hollow work email and password to review inquiries and manage venue documents.
+        </p>
+
+        <form id="staff-login-form" novalidate>
+          <div class="form-group">
+            <label for="staff-email">Work Email Address</label>
+            <input
+              type="email"
+              id="staff-email"
+              name="username"
+              class="form-control"
+              placeholder="name@juniperhollow.com"
+              autocomplete="username"
+              required
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="staff-password">Password</label>
+            <input
+              type="password"
+              id="staff-password"
+              name="password"
+              class="form-control"
+              placeholder="Enter your password"
+              autocomplete="current-password"
+              required
+            />
+          </div>
+
+          <div style="display: flex; gap: 0.85rem; margin-top: 1.5rem;">
+            <button type="submit" class="btn btn-primary" style="flex: 1;">Sign In</button>
+            <a href="index.html" class="btn btn-outline">Return Home</a>
+          </div>
+
+          <div id="staff-login-status" class="status-banner" role="status" aria-live="polite"></div>
+        </form>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <div class="footer-bottom" style="padding-top: 0;">
+        <span>&copy; 2026 Juniper Hollow Weddings &amp; Events.</span>
+        <div style="display: flex; gap: 1.5rem;">
+          <a href="index.html">Home</a>
+          <a href="venues.html">Our Venues</a>
+          <a href="contact.html">Contact Us</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
