@@ -57,7 +57,8 @@ if os.getenv("LANGSMITH_TRACING", "").lower() == "true":
     configure(client=Client(anonymizer=TRACE_ANONYMIZER))
     print(f"[INFO] LangSmith tracing enabled for project: {os.getenv('LANGSMITH_PROJECT', 'juniper-hollow-agent')}")
 
-# Staff review every draft before it is saved, in addition to the guarded send tools.
+# Retention drafts are reviewed before they are saved, in addition to the always-reviewed send.
+# Inquiry drafts are reviewed only at the send step, where should_interrupt_delivery decides.
 DRAFT_INTERRUPT_CONFIG = {"allowed_decisions": ["approve", "edit", "reject"]}
 
 
@@ -154,7 +155,6 @@ inquiry_agent = {
     "model": model1,
     # The supervisor must send the saved draft exactly, so it gets exact fields, not prose.
     "response_format": ToolStrategy(InquiryDraft),
-    "interrupt_on": {"save_inquiry_draft": DRAFT_INTERRUPT_CONFIG},
     "middleware": [
         ToolCallLimitMiddleware(
             tool_name="save_inquiry_draft",
