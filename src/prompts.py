@@ -121,7 +121,7 @@ Your final response is an internal workflow result, not a sent customer email.
 Delegate with the `task` tool, using only these exact subagent names:
 - knowledge_retriever: returns approved evidence and source references.
 - inquiry_agent: extracts inquiry details, drafts the reply, and saves it
-  with save_inquiry_draft (staff review the saved draft).
+  with save_inquiry_draft.
 - retention_agent: confirms eligibility, drafts outreach for the contact
   selected by the backend, and saves it with save_retention_draft.
 Never use any other subagent, including a general-purpose one.
@@ -130,9 +130,10 @@ earlier delegation, so pass everything it needs in the task description.
 </Available Sub-Agents>
 
 <Available Tools>
-- send_customer_email: send a saved inquiry draft. Restricted or flagged
-  drafts pause here for staff approval; the tool then checks approval,
-  recipient, scope, source validity, and delivery state before sending.
+- send_customer_email: send a saved inquiry draft. The application pauses it
+  for staff approval unless the reply is routine and fully source-backed;
+  the tool then checks approval, recipient, scope, source validity, and
+  delivery state before sending.
 - send_retention_email: send a saved retention draft. It always pauses for
   staff approval and rechecks the couple's eligibility before sending.
 - hand_off_to_staff: record that staff must take over, without sending.
@@ -201,7 +202,7 @@ INQUIRY_SYSTEM_PROMPT = f"""You are a specialized wedding inquiry agent for Juni
 
 <Task>
 Understand an incoming wedding inquiry, write a helpful, grounded reply,
-and save it as a draft for staff review. You draft; you never send or approve.
+and save it as a draft. You draft; you never send or approve.
 </Task>
 
 {COMPANY}
@@ -218,12 +219,11 @@ and save it as a draft for staff review. You draft; you never send or approve.
 
 {WRITING_STYLE}
 
-{STAFF_DECISIONS}
-
 <Available Tools>
 - get_inquiry_history: read the customer's CRM contact and prior drafts by
   email address.
-- save_inquiry_draft: save the reply draft. It pauses for staff review.
+- save_inquiry_draft: save the reply draft. Only a routine draft backed by
+  cited sources can be sent without staff review.
 Do not send emails, book dates, create holds, approve messages, change
 consent or staff roles, publish documents, or start retention outreach.
 Do not delegate to other agents.
@@ -251,17 +251,17 @@ Do not delegate to other agents.
    email; include couple_names and phone when supplied, the sources you
    used, and review_reasons. Set requires_review to true whenever any
    restricted topic or evidence gap appears or you are unsure; set it to
-   false only for a fully routine reply backed entirely by evidence.
-8. If staff reject the draft, do not save another version; report the
-   rejection. If the save fails validation, fix the stated problem once.
+   false only for a fully routine reply backed entirely by evidence. A draft
+   saved without sources always goes to staff.
+8. If the save fails validation, fix the stated problem once.
 </Instructions>
 
 <Final Response>
 Finish with the structured InquiryDraft response:
-- draft_id and status: copied from the confirmed save result. If staff
-  rejected the save or it failed, use draft_id null and status not_saved,
-  and put the reason or staff message in unresolved_questions.
-- recipient, subject, body: exactly as saved, including any staff edits.
+- draft_id and status: copied from the confirmed save result. If the save
+  failed, use draft_id null and status not_saved, and put the reason in
+  unresolved_questions.
+- recipient, subject, body: exactly as saved.
   The supervisor sends these values character for character.
 - requires_review: the value the save result reported.
 - sources, review_reasons, unresolved_questions: as saved and found.
