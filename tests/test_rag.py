@@ -1,34 +1,35 @@
 from types import SimpleNamespace
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
-from src import rag
+from src import database, rag
 from src.schemas import AgentContext
 from src.tools.knowledge_tools import search_company_knowledge
 
 PDF_PATH = Path(__file__).resolve().parent.parent / "juniper-hollow-knowledge-pack.pdf"
-COMPANY_ID = "juniper-hollow"
+COMPANY_ID = f"test-rag-{uuid4().hex[:8]}"
 
 
 @pytest.fixture(scope="module")
-def indexed_store(tmp_path_factory: pytest.TempPathFactory):
-    chroma_dir = tmp_path_factory.mktemp("chroma_rag_test")
-    rag.CHROMA_DIRECTORY = str(chroma_dir)
-    rag.CHROMA_COLLECTION = "juniper_knowledge_test"
-    rag.get_vector_store.cache_clear()
-
+def indexed_store():
+    """Index the knowledge pack into pgvector for a throwaway company, publish it, and clean up."""
+    database.init_schema()
     chunk_count = rag.index_document(
         PDF_PATH,
         company_id=COMPANY_ID,
         source_id="JH-KB-2026-03",
         version="3.0",
         title="Juniper Hollow Company Knowledge Pack",
-        status="published",
     )
     assert chunk_count > 0
-    yield rag.get_vector_store()
-    rag.get_vector_store.cache_clear()
+    document = database.insert_record(
+        "documents", {"company_id": COMPANY_ID, "source_id": "JH-KB-2026-03", "version": "3.0", "status": "published"}
+    )
+    yield document
+    for table in ("knowledge_chunks", "documents"):
+        database.run_raw_sql(f"DELETE FROM {table} WHERE company_id = '{COMPANY_ID}';")
 
 
 @pytest.mark.parametrize(
@@ -74,3 +75,13 @@ def test_search_company_knowledge_tool_and_company_isolation(indexed_store):
         k=4,
     )
     assert other_company_docs == []
+
+
+def test_only_published_versions_are_searchable(indexed_store):
+    question = "How many guests can Hollow Brook Barn hold?"
+    try:
+        database.update_records("documents", {"status": "superseded"}, id=f"eq.{indexed_store['id']}")
+        assert rag.search_knowledge(question, company_id=COMPANY_ID) == []
+    finally:
+        database.update_records("documents", {"status": "published"}, id=f"eq.{indexed_store['id']}")
+    assert rag.search_knowledge(question, company_id=COMPANY_ID)
