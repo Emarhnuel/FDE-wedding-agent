@@ -1,3 +1,4 @@
+import os
 import re
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -15,19 +16,28 @@ from langchain.agents.middleware import (
     ToolErrorMiddleware,
     ToolRetryMiddleware,
 )
-from langchain_core.messages import SystemMessage, ToolMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.types import Command
 from langsmith.anonymizer import create_anonymizer
+
+from . import database
 
 SENSITIVE_PATTERN = re.compile(
     r"(\$\s?\d|"
     r"\b(?:price|pricing|quote|rates?|cost|fees?|discounts?|retainer|deposit|"
-    r"date\s+hold|hold\s+a\s+date|book(?:ing)?|reserv(?:e|ation)|availab(?:le|ility)|"
-    r"contracts?|agreements?|cancel(?:lation)?|refunds?|complaints?|disputes?)\b)",
+    r"date\s+hold|hold\s+a\s+date|book(?:ing)?|reserv(?:e|ation)|availability|"
+    r"contracts?|agreements?|cancel(?:lation)?|refunds?|complaints?|disputes?)\b|"
+    # A specific date means a date request; plain "available" ("Wi-Fi is available") is routine.
+    r"\b20\d\d\b|\b\d{1,2}/\d{1,2}\b|"
+    r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|"
+    r"sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?\b)",
     re.IGNORECASE,
 )
 
 GUARDED_DELIVERY_TOOLS = frozenset({"send_customer_email", "send_retention_email"})
+
+# Off by default: every reply waits for staff until routine topics pass evaluation.
+AUTO_SEND_ROUTINE = os.environ.get("AUTO_SEND_ROUTINE", "").lower() == "true"
 
 
 def requires_human_review(text: str, *, job_type: str = "inquiry") -> bool:
@@ -37,37 +47,40 @@ def requires_human_review(text: str, *, job_type: str = "inquiry") -> bool:
     return bool(SENSITIVE_PATTERN.search(text or ""))
 
 
-def _extract_combined_text(request: ToolCallRequest) -> str:
+def _customer_and_draft_text(request: ToolCallRequest) -> str:
+    """The customer's messages plus the outgoing subject and body.
+
+    Retrieved passages and model reasoning are excluded: knowledge results mention prices for
+    many routine questions, and only what the customer asked and what we send decide review.
+    """
     args = request.tool_call.get("args") or {}
-    parts = [
-        str(args.get(key, ""))
-        for key in ("subject", "body", "inquiry_text", "topic", "notes")
-        if args.get(key)
-    ]
-    state = request.state or {}
-    for msg in state.get("messages", []) if isinstance(state, dict) else []:
-        content = getattr(msg, "content", "")
-        if isinstance(content, str):
-            parts.append(content)
-    return "\n".join(parts)
+    state = request.state if isinstance(request.state, dict) else {}
+    parts = [m.content for m in state.get("messages", []) if isinstance(m, HumanMessage) and isinstance(m.content, str)]
+    return "\n".join([*parts, str(args.get("subject", "")), str(args.get("body", ""))])
 
 
 def should_interrupt_delivery(request: ToolCallRequest) -> bool:
     """Conditional HITL predicate for guarded outbound email tools.
 
-    Fails closed (returns True to pause for staff review) whenever the context
-    is missing, the job is retention outreach, or any restricted topic appears.
+    Sends without review only when AUTO_SEND_ROUTINE is on and the job is an inquiry whose saved
+    draft cites approved sources, is not flagged for review, and neither the customer's message
+    nor the reply touches a restricted topic. Fails closed: anything else, including every
+    retention email and any lookup failure, pauses for staff review.
     """
     ctx = getattr(request.runtime, "context", None)
-    if ctx is None or not getattr(ctx, "company_id", None):
+    if not AUTO_SEND_ROUTINE or ctx is None or not getattr(ctx, "company_id", None):
         return True
-    job_type = getattr(ctx, "job_type", "inquiry")
-    if getattr(ctx, "requires_approval", False):
+    if getattr(ctx, "job_type", None) != "inquiry" or getattr(ctx, "requires_approval", False):
         return True
     args = request.tool_call.get("args") or {}
-    if args.get("requires_review") is True:
+    try:
+        draft = database.get_email_draft(str(args.get("draft_id", "")).strip(), ctx.company_id)
+    except Exception:
         return True
-    return requires_human_review(_extract_combined_text(request), job_type=job_type)
+    # The stored draft, not the model's arguments, proves the answer came from the knowledge pack.
+    if not draft or draft["requires_review"] or not draft.get("sources"):
+        return True
+    return requires_human_review(_customer_and_draft_text(request), job_type="inquiry")
 
 
 DELIVERY_INTERRUPT_CONFIG: InterruptOnConfig = {
@@ -229,6 +242,7 @@ TRACE_ANONYMIZER = create_anonymizer(
 
 
 __all__ = [
+    "AUTO_SEND_ROUTINE",
     "DELIVERY_INTERRUPT_CONFIG",
     "DeliveryGuardrailMiddleware",
     "GUARDED_DELIVERY_TOOLS",
