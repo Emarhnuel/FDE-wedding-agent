@@ -1,5 +1,6 @@
 """Staff authentication token verification using InsForge session APIs."""
 
+import secrets
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,6 +10,8 @@ from .. import database
 
 SESSION_PATH = "/api/auth/sessions/current"
 SIGN_IN_PATH = "/api/auth/sessions"
+USERS_PATH = "/api/auth/users"
+RESET_PASSWORD_PATH = "/api/auth/email/send-reset-password"
 
 
 class AuthError(Exception):
@@ -98,6 +101,38 @@ def sign_in(email: str, password: str) -> str:
     if not token:
         raise AuthError(503, "Authentication service returned an unexpected response.")
     return token
+
+
+def create_login(email: str, name: str) -> str:
+    """Create an InsForge login and return its user ID; raises AuthError 409 if the email exists.
+
+    The password is random and never shown: the new staff member sets their own through the
+    emailed reset code (send_password_setup). Uses the server-side admin key, never a browser.
+    """
+    try:
+        response = httpx.post(
+            f"{database.INSFORGE_URL}{USERS_PATH}",
+            params={"client_type": "server"},
+            headers={"Authorization": f"Bearer {database.INSFORGE_API_KEY}"},
+            json={"email": email, "password": secrets.token_urlsafe(32), "name": name},
+            timeout=15.0,
+        )
+    except httpx.HTTPError as exc:
+        raise AuthError(503, "Authentication service is unavailable.") from exc
+    if response.status_code == 409:
+        raise AuthError(409, "A login with this email already exists.")
+    if response.status_code not in (200, 201):
+        raise AuthError(503, "Authentication service returned an unexpected response.")
+    return str(response.json()["user"]["id"])
+
+
+def send_password_setup(email: str) -> bool:
+    """Email the user an InsForge reset code so they choose their own password; True if accepted."""
+    try:
+        response = httpx.post(f"{database.INSFORGE_URL}{RESET_PASSWORD_PATH}", json={"email": email}, timeout=15.0)
+    except httpx.HTTPError:
+        return False
+    return response.is_success
 
 
 def resolve_staff_membership(insforge_user_id: str) -> dict[str, Any]:
