@@ -7,10 +7,10 @@ __pycache__/
 production-main/
 docs/
 .devin/
-uv.lock
 # claude_help
 .mcp.json
 CLAUDE.md
 claude_help.md
 .agents/
 images/
+.claude/worktrees/

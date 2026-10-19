@@ -121,9 +121,9 @@ uv sync
 | Service | What you need | Where to get it |
 |---|---|---|
 | 🧠 **OpenRouter** | `OPENROUTER_API_KEY` | [openrouter.ai](https://openrouter.ai) → **Keys**. Add a few dollars of credit, since it powers both the models and the embeddings |
-| 🗄️ **InsForge** | `INSFORGE_URL`, `INSFORGE_API_KEY` | Your project in the InsForge dashboard: the project URL and its API key |
-| 🐘 **Postgres** | `DATABASE_URL` | Same InsForge project → database connection string. It stores paused agent runs |
-| 🗂️ **HubSpot** | `HUBSPOT_PRIVATE_APP_TOKEN` | HubSpot → create a private app with **contacts read + write** scopes → copy its access token |
+| 🗄️ **InsForge** | `INSFORGE_URL`, `INSFORGE_API_KEY` | InsForge dashboard: the backend URL (`https://<app>.<region>.insforge.app`) and the **admin API key**, not the anon key. The admin key has full access, so keep it server-side only |
+| 🐘 **Postgres** | `DATABASE_URL` | InsForge dashboard → **Project Settings → Connect → Connection String**, or run `npx @insforge/cli db connection-string`. It stores paused agent runs |
+| 🗂️ **HubSpot** | `HUBSPOT_PRIVATE_APP_TOKEN` | HubSpot (super admin) → **Settings → Integrations → Private Apps** (called *Legacy Apps* in newer accounts) → create an app with `crm.objects.contacts.read` + `crm.objects.contacts.write` → copy its access token |
 | 📧 **Gmail** | 4 values (below) | Follow the Gmail guide in step 3 |
 | 🕵️ **LangSmith** | `LANGSMITH_API_KEY` | [smith.langchain.com](https://smith.langchain.com) → **Settings → API Keys** |
 
@@ -143,7 +143,7 @@ This is the trickiest part. The full click-by-click guide, with fixes for common
 
 ### 4. Create your `.env`
 
-Create a `.env` file in the project root. Use no quotes and no spaces around `=`.
+Copy `.env.example` to `.env` in the project root and fill it in. Use no quotes and no spaces around `=`.
 
 ```ini
 # Models + embeddings
