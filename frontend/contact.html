@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Contact Us | Juniper Hollow Weddings &amp; Events</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="top-ribbon">
+    Inquire With Juniper Hollow <span>&bull;</span> Private Tours &amp; Custom Proposals <span>&bull;</span> Nashville, TN
+  </div>
+
+  <header class="site-header">
+    <div class="nav-container">
+      <a href="index.html" class="brand-logo">
+        <span class="brand-title">Juniper Hollow</span>
+        <span class="brand-subtitle">Weddings &amp; Events</span>
+      </a>
+
+      <nav aria-label="Primary Navigation">
+        <ul class="nav-links">
+          <li><a href="index.html">Home</a></li>
+          <li><a href="venues.html">Our Venues</a></li>
+          <li><a href="contact.html" class="active">Contact Us</a></li>
+          <li><a href="login.html">Staff Login</a></li>
+        </ul>
+      </nav>
+
+      <div class="nav-actions">
+        <a href="login.html" class="btn btn-outline">Staff Login</a>
+        <a href="contact.html" class="btn btn-primary">Contact Us</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="section">
+      <div class="container">
+        <div style="margin-bottom: 3rem;">
+          <span class="eyebrow">Wedding &amp; Event Inquiries</span>
+          <h1 class="heading-xl">Tell us about your <em>celebration</em>.</h1>
+          <p class="lead-copy" style="margin-top: 1rem;">
+            Whether you are exploring venue capacities, parking, and catering options or requesting a private tour and custom proposal, share your details below.
+          </p>
+        </div>
+
+        <div class="contact-layout">
+          <!-- Left Column: Hospitality Details -->
+          <aside class="info-panel">
+            <span class="pill">Hospitality Concierge</span>
+            <h3 style="margin-top: 1rem;">Visit Juniper Hollow</h3>
+            <p>
+              Our events team hosts private tours Tuesday through Sunday by appointment and responds promptly to every inquiry.
+            </p>
+
+            <ul class="info-list">
+              <li>
+                <strong>Hollow Brook Barn</strong>
+                Up to 180 seated / 220 cocktail reception &bull; Franklin Creekside Estate
+              </li>
+              <li>
+                <strong>The Juniper Glasshouse</strong>
+                Up to 96 seated / 120 standing reception &bull; Downtown Conservatory
+              </li>
+              <li>
+                <strong>Private Estate Tours</strong>
+                Tuesday &ndash; Sunday, 9:00 AM &ndash; 6:00 PM Central Time
+              </li>
+              <li>
+                <strong>Direct Hospitality Desk</strong>
+                Nashville &amp; Franklin, Tennessee
+              </li>
+            </ul>
+          </aside>
+
+          <!-- Right Column: The Inquiry Form -->
+          <div class="form-card">
+            <h2 class="heading-md" style="margin-bottom: 0.4rem;">Send an Inquiry</h2>
+            <p style="color: var(--ink-muted); font-size: 0.92rem; margin-bottom: 1.75rem;">
+              Fill out the form below and our team will be in touch with you shortly.
+            </p>
+
+            <form id="wedding-inquiry-form" novalidate>
+              <div class="form-grid">
+                <div class="form-group">
+                  <label for="inquiry-name">Your Name(s) *</label>
+                  <input
+                    type="text"
+                    id="inquiry-name"
+                    name="name"
+                    class="form-control"
+                    placeholder="e.g. Clara &amp; Julian Vance"
+                    maxlength="200"
+                    required
+                  />
+                </div>
+
+                <div class="form-group">
+                  <label for="inquiry-email">Email Address *</label>
+                  <input
+                    type="email"
+                    id="inquiry-email"
+                    name="email"
+                    class="form-control"
+                    placeholder="clara.julian@example.com"
+                    maxlength="320"
+                    required
+                  />
+                </div>
+
+                <div class="form-group">
+                  <label for="inquiry-phone">Phone Number <span class="optional">(optional)</span></label>
+                  <input
+                    type="tel"
+                    id="inquiry-phone"
+                    name="phone"
+                    class="form-control"
+                    placeholder="615-555-0148"
+                    maxlength="50"
+                  />
+                </div>
+
+                <div class="form-group">
+                  <label for="inquiry-venue">Preferred Venue <span class="optional">(optional)</span></label>
+                  <select id="inquiry-venue" name="venue" class="form-control">
+                    <option value="Either Venue / Undecided">Either Venue / Undecided</option>
+                    <option value="Hollow Brook Barn">Hollow Brook Barn (up to 220)</option>
+                    <option value="The Juniper Glasshouse">The Juniper Glasshouse (up to 120)</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label for="inquiry-guests">Estimated Guest Count <span class="optional">(optional)</span></label>
+                  <input
+                    type="number"
+                    id="inquiry-guests"
+                    name="guests"
+                    class="form-control"
+                    placeholder="e.g. 140"
+                    min="10"
+                    max="300"
+                  />
+                </div>
+
+                <div class="form-group">
+                  <label for="inquiry-date">Preferred Date or Season <span class="optional">(optional)</span></label>
+                  <input
+                    type="text"
+                    id="inquiry-date"
+                    name="date"
+                    class="form-control"
+                    placeholder="e.g. October 2027 or Autumn Saturday"
+                  />
+                </div>
+
+                <div class="form-group full-width">
+                  <label for="inquiry-message">Your Questions &amp; Celebration Plans *</label>
+                  <textarea
+                    id="inquiry-message"
+                    name="message"
+                    class="form-control"
+                    placeholder="Tell us about your wedding plans, questions about Hollow Brook Barn or The Juniper Glasshouse, or preferred tour dates..."
+                    maxlength="5000"
+                    required
+                  ></textarea>
+                </div>
+              </div>
+
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-top: 0.5rem;">
+                <span style="font-size: 0.82rem; color: var(--ink-muted);">
+                  The Juniper Hollow Weddings &amp; Events Team
+                </span>
+                <button type="submit" class="btn btn-primary">Send Inquiry</button>
+              </div>
+
+              <div id="inquiry-status" class="status-banner" role="status" aria-live="polite"></div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <div class="footer-bottom" style="padding-top: 0;">
+        <span>&copy; 2026 Juniper Hollow Weddings &amp; Events.</span>
+        <div style="display: flex; gap: 1.5rem;">
+          <a href="index.html">Home</a>
+          <a href="venues.html">Our Venues</a>
+          <a href="contact.html">Contact Us</a>
+          <a href="login.html">Staff Login</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
