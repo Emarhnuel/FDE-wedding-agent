@@ -35,7 +35,7 @@ def _admin_headers() -> dict[str, str]:
 
 
 @pytest.fixture(scope="module")
-def client(tmp_path_factory: pytest.TempPathFactory):
+def client():
     """Isolated company, published knowledge, a real email_approver login, and full cleanup."""
     assert RECIPIENT, "Set TEST_EMAIL_RECIPIENT or GMAIL_SENDER in .env"
     assert os.environ.get("DATABASE_URL"), "Set DATABASE_URL so paused runs persist in Postgres"
@@ -47,12 +47,9 @@ def client(tmp_path_factory: pytest.TempPathFactory):
     api.RUN_JOBS_LOCALLY = False
     middleware.AUTO_SEND_ROUTINE = False
 
-    rag.CHROMA_DIRECTORY = str(tmp_path_factory.mktemp("chroma_e2e"))
-    rag.CHROMA_COLLECTION = "juniper_knowledge_e2e"
-    rag.get_vector_store.cache_clear()
     rag.index_document(
         PDF_PATH, company_id=COMPANY_ID, source_id=SOURCE_ID, version=SOURCE_VERSION,
-        title="Juniper Hollow Company Knowledge Pack", status="published",
+        title="Juniper Hollow Company Knowledge Pack",
     )
     database.insert_record(
         "documents", {"company_id": COMPANY_ID, "source_id": SOURCE_ID, "version": SOURCE_VERSION, "status": "published"}
@@ -82,14 +79,14 @@ def client(tmp_path_factory: pytest.TempPathFactory):
             agent.checkpointer.delete_thread(job["thread_id"])
         for item in agent.store.search((COMPANY_ID,), limit=1000):
             agent.store.delete(item.namespace, item.key)
-        for table in ("jobs", "agent_reviews", "email_drafts", "couples", "documents", "audit_logs", "staff_members"):
+        for table in ("jobs", "agent_reviews", "email_drafts", "couples", "documents", "audit_logs", "staff_members",
+                      "knowledge_chunks"):
             database.run_raw_sql(f"DELETE FROM {table} WHERE company_id = '{COMPANY_ID}';")
         httpx.request("DELETE", f"{database.INSFORGE_URL}/api/auth/users", headers=_admin_headers(),
                       json={"userIds": [user["user"]["id"]]}, timeout=15.0)
         if not preexisting_contact and (contact := find_hubspot_contact_by_email(RECIPIENT)):
             httpx.delete(f"{HUBSPOT_BASE_URL}/crm/v3/objects/contacts/{contact['id']}",
                          headers=_hubspot_headers(), timeout=15.0)
-        rag.get_vector_store.cache_clear()
 
 
 def job(job_id: str) -> dict:
