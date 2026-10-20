@@ -54,7 +54,7 @@ def verify_insforge_session(token: str) -> dict[str, Any]:
     if not database.INSFORGE_URL:
         raise AuthError(503, "Authentication service is not configured.")
     try:
-        response = httpx.get(
+        response = database.http.get(
             f"{database.INSFORGE_URL}{SESSION_PATH}",
             headers={"Authorization": f"Bearer {token}"},
             timeout=10.0,
@@ -85,7 +85,7 @@ def sign_in(email: str, password: str) -> str:
     if not database.INSFORGE_URL:
         raise AuthError(503, "Authentication service is not configured.")
     try:
-        response = httpx.post(
+        response = database.http.post(
             f"{database.INSFORGE_URL}{SIGN_IN_PATH}",
             params={"client_type": "server"},
             json={"method": "password", "email": email, "password": password},
@@ -119,7 +119,7 @@ def create_login(email: str, name: str, password: str) -> str:
     server-side admin key, never a browser.
     """
     try:
-        response = httpx.post(
+        response = database.http.post(
             f"{database.INSFORGE_URL}{USERS_PATH}",
             params={"client_type": "server"},
             headers={"Authorization": f"Bearer {database.INSFORGE_API_KEY}"},
@@ -140,7 +140,7 @@ def create_login(email: str, name: str, password: str) -> str:
 def send_password_code(email: str) -> None:
     """Ask InsForge to email a 6-digit password reset code. InsForge never reveals if the email exists."""
     try:
-        response = httpx.post(f"{database.INSFORGE_URL}{SEND_RESET_CODE_PATH}", json={"email": email}, timeout=15.0)
+        response = database.http.post(f"{database.INSFORGE_URL}{SEND_RESET_CODE_PATH}", json={"email": email}, timeout=15.0)
     except httpx.HTTPError as exc:
         raise AuthError(503, "Authentication service is unavailable.") from exc
     if response.status_code >= 500:
@@ -150,7 +150,7 @@ def send_password_code(email: str) -> None:
 def reset_password(email: str, code: str, new_password: str) -> None:
     """Exchange the emailed code for a reset token, then set the new password (InsForge code method)."""
     try:
-        exchange = httpx.post(
+        exchange = database.http.post(
             f"{database.INSFORGE_URL}{EXCHANGE_RESET_CODE_PATH}", json={"email": email, "code": code}, timeout=15.0
         )
         if 400 <= exchange.status_code < 500:
@@ -158,7 +158,7 @@ def reset_password(email: str, code: str, new_password: str) -> None:
         token = exchange.json().get("token") if exchange.is_success else None
         if not token:
             raise AuthError(503, "Authentication service returned an unexpected response.")
-        reset = httpx.post(
+        reset = database.http.post(
             f"{database.INSFORGE_URL}{RESET_PASSWORD_PATH}", json={"newPassword": new_password, "otp": token}, timeout=15.0
         )
     except httpx.HTTPError as exc:
