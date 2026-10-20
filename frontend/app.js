@@ -50,26 +50,25 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const submit = inquiryForm.querySelector('button[type="submit"]');
-      submit.disabled = true;
       try {
         // POST /inquiries queues the inquiry for the agent and answers 202 straight away.
-        await api("/inquiries", {
-          method: "POST",
-          json: {
-            name,
-            email,
-            phone,
-            venue,
-            guest_count: guests ? Number(guests) : null,
-            preferred_date: datePref,
-            message,
-          },
-        });
+        await whileBusy(submit, "Sending\u2026", () =>
+          api("/inquiries", {
+            method: "POST",
+            json: {
+              name,
+              email,
+              phone,
+              venue,
+              guest_count: guests ? Number(guests) : null,
+              preferred_date: datePref,
+              message,
+            },
+          })
+        );
       } catch (error) {
         showStatus(inquiryStatus, "error", "We couldn't send your inquiry. " + error.message);
         return;
-      } finally {
-        submit.disabled = false;
       }
 
       inquiryStatus.className = "status-banner visible success";
@@ -135,7 +134,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
       try {
         // POST /auth/login is an OAuth2 password form: the email goes in "username".
-        const data = await api("/auth/login", { method: "POST", form: { username: email, password } });
+        const submit = staffLoginForm.querySelector('button[type="submit"]');
+        const data = await whileBusy(submit, "Signing in\u2026", () =>
+          api("/auth/login", { method: "POST", form: { username: email, password } })
+        );
         sessionStorage.setItem(TOKEN_KEY, data.access_token);
         window.location.href = "portal.html";
       } catch (error) {
@@ -194,6 +196,20 @@ async function api(path, { method = "GET", json, form } = {}) {
 function showStatus(element, type, message) {
   element.className = "status-banner visible " + type;
   element.textContent = message;
+}
+
+// Shows a working label and disables the button the moment it is clicked, so every click gets
+// instant feedback even while the server works. Returns the task's result.
+async function whileBusy(button, label, task) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = label;
+  try {
+    return await task();
+  } finally {
+    button.textContent = original;
+    button.disabled = false;
+  }
 }
 
 function signOut() {
@@ -275,7 +291,7 @@ function initReviews() {
   const approveButton = document.getElementById("btn-approve");
   const approveEditsButton = document.getElementById("btn-approve-edits");
   const rejectButton = document.getElementById("btn-reject");
-  let current = null; // The review being viewed, from GET /reviews/{id}.
+  let current = null; // The review being viewed (from the list, then completed by GET /reviews/{id}).
 
   function handleError(error) {
     if (error.status === 401) return signOut();
@@ -321,7 +337,7 @@ function initReviews() {
     );
     const open = element("button", "Open", "btn btn-outline");
     open.type = "button";
-    open.addEventListener("click", () => openReview(review.id));
+    open.addEventListener("click", () => openReview(review));
     item.append(text, open);
     return item;
   }
@@ -337,15 +353,11 @@ function initReviews() {
       .join(" · ");
   }
 
-  async function openReview(reviewId) {
+  // Shows the review at once from the list data; the stored draft's reasons and sources follow.
+  async function openReview(review) {
     status.className = "status-banner";
-    try {
-      current = await api("/reviews/" + reviewId);
-    } catch (error) {
-      return handleError(error);
-    }
+    current = review;
     const args = current.action_args || {};
-    const draft = current.draft || {};
     const request = current.original_request || {};
     const isSend = current.action_name.startsWith("send_");
 
@@ -374,12 +386,23 @@ function initReviews() {
     message.textContent = request.message || "";
     message.classList.toggle("hidden-panel", !request.message);
 
-    fillList(document.getElementById("review-reasons"), draft.review_reasons || args.review_reasons || [], "No specific reason was recorded.");
-    fillList(document.getElementById("review-sources"), (draft.sources || args.sources || []).map(sourceText), "No sources were cited.");
+    // A draft step carries its reasons and sources in the args; a send step's are on the stored draft.
+    const reasonsList = document.getElementById("review-reasons");
+    const sourcesList = document.getElementById("review-sources");
+    const showDetails = (reasons, sources) => {
+      fillList(reasonsList, reasons, "No specific reason was recorded.");
+      fillList(sourcesList, sources.map(sourceText), "No sources were cited.");
+    };
+    if (review.draft_id) {
+      fillList(reasonsList, [], "Loading…");
+      fillList(sourcesList, [], "Loading…");
+    } else {
+      showDetails(args.review_reasons || [], args.sources || []);
+    }
 
-    document.getElementById("review-recipient").textContent = "To: " + (args.recipient || draft.recipient || "unknown");
-    subjectInput.value = args.subject || draft.subject || "";
-    bodyInput.value = args.body || draft.body || "";
+    document.getElementById("review-recipient").textContent = "To: " + (args.recipient || "unknown");
+    subjectInput.value = args.subject || "";
+    bodyInput.value = args.body || "";
     rejectNote.value = "";
     approveButton.textContent = isSend ? "Approve & Send" : "Approve Draft";
     updateButtons();
@@ -388,6 +411,15 @@ function initReviews() {
     list.classList.add("hidden-panel");
     detail.classList.remove("hidden-panel");
     detail.scrollIntoView({ behavior: "smooth", block: "start" });
+
+    if (!review.draft_id) return;
+    try {
+      const draft = (await api("/reviews/" + review.id)).draft || {};
+      if (current !== review) return; // The reviewer moved on to another review meanwhile.
+      showDetails(draft.review_reasons || [], draft.sources || []);
+    } catch (error) {
+      if (current === review) handleError(error);
+    }
   }
 
   function edits() {
@@ -410,8 +442,10 @@ function initReviews() {
     if (!disabled) updateButtons();
   }
 
-  async function decide(payload, successMessage) {
+  async function decide(button, workingLabel, payload, successMessage) {
+    const label = button.textContent;
     setButtonsDisabled(true);
+    button.textContent = workingLabel;
     try {
       await api("/reviews/" + current.id + "/decision", { method: "POST", json: payload });
       showStatus(status, "success", successMessage);
@@ -424,6 +458,8 @@ function initReviews() {
       }
       handleError(error);
       setButtonsDisabled(false);
+    } finally {
+      button.textContent = label;
     }
   }
 
@@ -436,7 +472,9 @@ function initReviews() {
   subjectInput.addEventListener("input", updateButtons);
   bodyInput.addEventListener("input", updateButtons);
 
-  approveButton.addEventListener("click", () => decide({ decision: "approve" }, approvedMessage()));
+  approveButton.addEventListener("click", () =>
+    decide(approveButton, "Approving…", { decision: "approve" }, approvedMessage())
+  );
 
   approveEditsButton.addEventListener("click", () => {
     const changes = edits();
@@ -444,22 +482,23 @@ function initReviews() {
       showStatus(status, "error", "The subject and body can't be empty.");
       return;
     }
-    decide({ decision: "edit", ...changes }, approvedMessage().replace("Approved.", "Approved with your edits."));
+    decide(approveEditsButton, "Approving…", { decision: "edit", ...changes }, approvedMessage().replace("Approved.", "Approved with your edits."));
   });
 
   rejectButton.addEventListener("click", () => {
     if (!window.confirm("Reject this email? It will not be sent.")) return;
     const note = rejectNote.value.trim();
-    decide({ decision: "reject", ...(note ? { message: note } : {}) }, "Rejected. This email will not be sent.");
+    decide(rejectButton, "Rejecting…", { decision: "reject", ...(note ? { message: note } : {}) }, "Rejected. This email will not be sent.");
   });
 
   document.getElementById("btn-back-to-reviews").addEventListener("click", () => {
     status.className = "status-banner";
     loadReviews();
   });
-  document.getElementById("btn-refresh-reviews").addEventListener("click", () => {
+  const refreshButton = document.getElementById("btn-refresh-reviews");
+  refreshButton.addEventListener("click", () => {
     status.className = "status-banner";
-    loadReviews();
+    whileBusy(refreshButton, "Refreshing…", loadReviews);
   });
 
   loadReviews();
@@ -497,14 +536,14 @@ function initStaffAdmin(me) {
       button.className = "btn btn-ghost";
       button.textContent = member.is_active ? "Deactivate" : "Reactivate";
       button.addEventListener("click", async () => {
-        button.disabled = true;
         try {
-          await api("/staff/" + member.id, { method: "PATCH", json: { is_active: !member.is_active } });
+          await whileBusy(button, "Saving…", () =>
+            api("/staff/" + member.id, { method: "PATCH", json: { is_active: !member.is_active } })
+          );
           await loadStaff();
         } catch (error) {
           if (error.status === 401) return signOut();
           showStatus(listStatus, "error", error.message);
-          button.disabled = false;
         }
       });
       actionCell.appendChild(button);
@@ -526,9 +565,10 @@ function initStaffAdmin(me) {
     }
 
     const submit = form.querySelector('button[type="submit"]');
-    submit.disabled = true;
     try {
-      const member = await api("/staff", { method: "POST", json: { full_name: fullName, email, password, roles } });
+      const member = await whileBusy(submit, "Adding…", () =>
+        api("/staff", { method: "POST", json: { full_name: fullName, email, password, roles } })
+      );
       showStatus(
         formStatus,
         "success",
@@ -539,8 +579,6 @@ function initStaffAdmin(me) {
     } catch (error) {
       if (error.status === 401) return signOut();
       showStatus(formStatus, "error", error.message);
-    } finally {
-      submit.disabled = false;
     }
   });
 
@@ -568,7 +606,10 @@ function initPasswordPage() {
       return;
     }
     try {
-      const data = await api("/auth/password/code", { method: "POST", json: { email } });
+      const submit = codeForm.querySelector('button[type="submit"]');
+      const data = await whileBusy(submit, "Sending code…", () =>
+        api("/auth/password/code", { method: "POST", json: { email } })
+      );
       showStatus(status, "success", data.detail);
       codeForm.classList.add("hidden-panel");
       resetForm.classList.remove("hidden-panel");
@@ -593,10 +634,13 @@ function initPasswordPage() {
       return;
     }
     try {
-      const data = await api("/auth/password/reset", {
-        method: "POST",
-        json: { email: emailInput.value.trim(), code, new_password: newPassword },
-      });
+      const submit = resetForm.querySelector('button[type="submit"]');
+      const data = await whileBusy(submit, "Changing password…", () =>
+        api("/auth/password/reset", {
+          method: "POST",
+          json: { email: emailInput.value.trim(), code, new_password: newPassword },
+        })
+      );
       // Sign out so the next sign-in uses the new password.
       sessionStorage.removeItem(TOKEN_KEY);
       resetForm.classList.add("hidden-panel");
