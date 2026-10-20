@@ -164,7 +164,7 @@ document.addEventListener("DOMContentLoaded", () => {
 const TOKEN_KEY = "jhStaffToken";
 
 // Calls the FastAPI backend. Throws an Error whose message is safe to show, with .status set.
-async function api(path, { method = "GET", json, form } = {}) {
+async function api(path, { method = "GET", json, form, formData } = {}) {
   const headers = {};
   const token = sessionStorage.getItem(TOKEN_KEY);
   if (token) headers.Authorization = "Bearer " + token;
@@ -174,6 +174,8 @@ async function api(path, { method = "GET", json, form } = {}) {
     body = JSON.stringify(json);
   } else if (form) {
     body = new URLSearchParams(form);
+  } else if (formData) {
+    body = formData; // File upload: the browser sets the multipart Content-Type itself.
   }
 
   let response;
@@ -256,10 +258,141 @@ async function initPortal() {
     document.getElementById("reviews-section").classList.remove("hidden-panel");
     initReviews();
   }
+  if (me.roles.includes("knowledge_manager")) {
+    document.getElementById("documents-section").classList.remove("hidden-panel");
+    initDocuments();
+  }
   if (me.roles.includes("staff_admin")) {
     document.getElementById("staff-admin-section").classList.remove("hidden-panel");
     initStaffAdmin(me);
   }
+}
+
+// =============================================================================
+// Staff Portal: Knowledge Documents (upload, publish, roll back)
+// =============================================================================
+
+const DOCUMENT_STATUS_LABELS = {
+  processing: "Indexing…",
+  ready: "Ready to publish",
+  published: "Live",
+  superseded: "Replaced",
+  failed: "Failed",
+};
+
+function initDocuments() {
+  const form = document.getElementById("upload-document-form");
+  const formStatus = document.getElementById("upload-document-status");
+  const tableBody = document.getElementById("documents-table-body");
+  const listStatus = document.getElementById("documents-status");
+  const idPattern = /^[A-Za-z0-9._-]{1,64}$/;
+  let pollTimer = null;
+
+  function handleError(error, statusElement) {
+    if (error.status === 401) return signOut();
+    showStatus(statusElement, "error", error.message);
+  }
+
+  async function loadDocuments() {
+    clearTimeout(pollTimer);
+    try {
+      const documents = await api("/documents");
+      tableBody.replaceChildren(...documents.map(documentRow));
+      // Indexing runs in the background: check again until every upload has finished.
+      if (documents.some((doc) => doc.status === "processing")) pollTimer = setTimeout(loadDocuments, 4000);
+    } catch (error) {
+      handleError(error, listStatus);
+    }
+  }
+
+  function documentRow(doc) {
+    const row = document.createElement("tr");
+    const status = DOCUMENT_STATUS_LABELS[doc.status] || doc.status;
+    for (const text of [
+      doc.source_id,
+      doc.version,
+      doc.title || "",
+      doc.status === "failed" && doc.error ? status + ": " + doc.error : status,
+      new Date(doc.created_at).toLocaleDateString(),
+    ]) {
+      row.appendChild(element("td", text));
+    }
+    const actionCell = element("td");
+    if (doc.status === "ready") {
+      actionCell.appendChild(actionButton("Publish", "Publishing…", doc, "publish",
+        "Publish " + doc.source_id + " version " + doc.version + "? The agent starts using it right away, replacing the live version."));
+    } else if (doc.status === "superseded") {
+      actionCell.appendChild(actionButton("Roll Back to This", "Rolling back…", doc, "rollback",
+        "Make " + doc.source_id + " version " + doc.version + " live again? It replaces the current live version."));
+    }
+    row.appendChild(actionCell);
+    return row;
+  }
+
+  function actionButton(label, workingLabel, doc, action, question) {
+    const button = element("button", label, "btn btn-ghost");
+    button.type = "button";
+    button.addEventListener("click", async () => {
+      if (!window.confirm(question)) return;
+      try {
+        await whileBusy(button, workingLabel, () => api("/documents/" + doc.id + "/" + action, { method: "POST" }));
+        showStatus(listStatus, "success", doc.source_id + " version " + doc.version + " is now live.");
+        await loadDocuments();
+      } catch (error) {
+        handleError(error, listStatus);
+        if (error.status === 409) loadDocuments(); // Someone else changed it: show the current state.
+      }
+    });
+    return button;
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const sourceId = document.getElementById("document-source-id").value.trim();
+    const version = document.getElementById("document-version").value.trim();
+    const title = document.getElementById("document-title").value.trim();
+    const venue = document.getElementById("document-venue").value;
+    const file = document.getElementById("document-file").files[0];
+
+    if (!sourceId || !version || !title || !file) {
+      showStatus(formStatus, "error", "Please fill in the Document ID, version, title, and choose a file.");
+      return;
+    }
+    if (!idPattern.test(sourceId) || !idPattern.test(version)) {
+      showStatus(formStatus, "error", "The Document ID and version may use only letters, numbers, dots, dashes, and underscores.");
+      return;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      showStatus(formStatus, "error", "The file is larger than 4 MB.");
+      return;
+    }
+
+    const data = new FormData();
+    data.append("source_id", sourceId);
+    data.append("version", version);
+    data.append("title", title);
+    data.append("venue", venue);
+    data.append("file", file);
+    try {
+      await whileBusy(form.querySelector('button[type="submit"]'), "Uploading…", () =>
+        api("/documents", { method: "POST", formData: data })
+      );
+      showStatus(formStatus, "success",
+        "Uploaded " + sourceId + " version " + version + ". It is being indexed now; publish it once it shows “Ready to publish”.");
+      form.reset();
+      await loadDocuments();
+    } catch (error) {
+      handleError(error, formStatus);
+    }
+  });
+
+  const refreshButton = document.getElementById("btn-refresh-documents");
+  refreshButton.addEventListener("click", () => {
+    listStatus.className = "status-banner";
+    whileBusy(refreshButton, "Refreshing…", loadDocuments);
+  });
+
+  loadDocuments();
 }
 
 function element(tag, text, className) {
