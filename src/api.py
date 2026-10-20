@@ -24,10 +24,11 @@ from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from mangum import Mangum
 from pydantic import BaseModel, Field
-from pypdf.errors import PdfReadError
 
-from . import database
-from .security.auth import AuthError, StaffIdentity, authenticate_staff, create_login, send_password_setup, sign_in
+from . import database, storage
+from .security.auth import (
+    AuthError, StaffIdentity, authenticate_staff, create_login, reset_password, send_password_code, sign_in,
+)
 from .security.permissions import STAFF_ADMIN, Action, authorize
 
 # Trusted server configuration; never taken from request payloads.
@@ -70,15 +71,20 @@ def send_job(job: dict, dedupe_id: str | None = None) -> None:
             MessageDeduplicationId=dedupe_id or job["id"],
         )
     elif RUN_JOBS_LOCALLY:
-        from .runtime import run_job  # Imported here so the deployed API never loads the agent.
-
-        threading.Thread(target=run_job, args=(job["id"],), daemon=True).start()
+        threading.Thread(target=run_job_locally, args=(job["id"],), daemon=True).start()
 
 
-def queue_job(kind: str, thread_id: str, dedupe_key: str, payload: dict) -> dict:
+def run_job_locally(job_id: str) -> None:
+    # Imported here so the deployed API never loads the agent, and in the thread so requests don't wait for it.
+    from .runtime import run_job
+
+    run_job(job_id)
+
+
+def queue_job(kind: str, thread_id: str, dedupe_key: str, payload: dict, company_id: str = COMPANY_ID) -> dict:
     """Record the job durably, then hand it to SQS once; duplicates are not re-sent."""
     job, created = database.enqueue_job(
-        company_id=COMPANY_ID, kind=kind, thread_id=thread_id, dedupe_key=dedupe_key, payload=payload
+        company_id=company_id, kind=kind, thread_id=thread_id, dedupe_key=dedupe_key, payload=payload
     )
     if created:
         send_job(job)
@@ -96,6 +102,9 @@ class InquiryIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     email: str = Field(pattern=EMAIL_PATTERN, max_length=320)
     phone: str = Field(default="", max_length=50)
+    venue: str = Field(default="", max_length=200)
+    guest_count: int | None = Field(default=None, ge=1, le=1000)
+    preferred_date: str = Field(default="", max_length=200)
     message: str = Field(min_length=1, max_length=5000)
 
 
@@ -108,6 +117,35 @@ def health() -> dict:
 def login(form: OAuth2PasswordRequestForm = Depends()) -> dict:
     """Sign in with staff email (as username) and password; returns an InsForge access token."""
     return {"access_token": sign_in(form.username, form.password), "token_type": "bearer"}
+
+
+class PasswordCodeIn(BaseModel):
+    email: str = Field(pattern=EMAIL_PATTERN, max_length=320)
+
+
+class PasswordResetIn(PasswordCodeIn):
+    code: str = Field(pattern=r"^\d{6}$")
+    new_password: str = Field(min_length=1, max_length=128)
+
+
+@app.post("/auth/password/code", status_code=202)
+def request_password_code(body: PasswordCodeIn) -> dict:
+    """Email a 6-digit code for changing or resetting a password (InsForge reset, code method)."""
+    send_password_code(body.email.lower())
+    return {"detail": "If this email has a staff login, a 6-digit code is on its way."}
+
+
+@app.post("/auth/password/reset")
+def change_password(body: PasswordResetIn) -> dict:
+    reset_password(body.email.lower(), body.code, body.new_password)
+    return {"detail": "Password changed. Sign in with your new password."}
+
+
+@app.get("/me")
+def who_am_i(staff: StaffIdentity = Depends(current_staff)) -> dict:
+    """The signed-in staff member, so the portal can show the right sections for their roles."""
+    return {"staff_id": staff.staff_id, "email": staff.email, "full_name": staff.full_name,
+            "company_id": staff.company_id, "roles": sorted(staff.roles)}
 
 
 @app.post("/inquiries", status_code=202)
@@ -249,6 +287,7 @@ class StaffIn(BaseModel):
     email: str = Field(pattern=EMAIL_PATTERN, max_length=320)
     full_name: str = Field(min_length=1, max_length=200)
     roles: list[StaffRole] = Field(min_length=1)
+    password: str = Field(min_length=1, max_length=128)  # InsForge enforces its own password rules.
 
 
 class StaffUpdate(BaseModel):
@@ -264,19 +303,19 @@ def list_staff(staff: StaffIdentity = Depends(current_staff)) -> list[dict]:
 
 @app.post("/staff", status_code=201)
 def add_staff(staff_in: StaffIn, staff: StaffIdentity = Depends(current_staff)) -> dict:
-    """Create a staff login and membership; InsForge emails the new member a code to set their password."""
+    """Create a staff login with the password the admin chose; the member can change it later."""
     authorize(staff, Action.MANAGE_STAFF, company_id=staff.company_id)
     email = staff_in.email.lower()
     member = database.insert_record(
         "staff_members",
-        {"insforge_user_id": create_login(email, staff_in.full_name), "company_id": staff.company_id,
+        {"insforge_user_id": create_login(email, staff_in.full_name, staff_in.password), "company_id": staff.company_id,
          "email": email, "full_name": staff_in.full_name, "roles": sorted(set(staff_in.roles))},
     )
     database.log_audit_event(
         company_id=staff.company_id, actor_id=staff.staff_id, action="staff_added",
         target_type="staff_member", target_id=member["id"], details={"roles": member["roles"]},
     )
-    return {**member, "invite_sent": send_password_setup(email)}
+    return member
 
 
 @app.patch("/staff/{staff_id}")
@@ -307,7 +346,8 @@ def update_staff(staff_id: str, update: StaffUpdate, staff: StaffIdentity = Depe
 # =============================================================================
 
 DOCUMENT_TYPES = {".pdf", ".txt", ".md"}
-MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
+# API Gateway passes a file to Lambda base64-encoded (a third larger) inside Lambda's 6 MB request limit.
+MAX_DOCUMENT_BYTES = 4 * 1024 * 1024
 # Source IDs and versions end up in file names and chunk IDs, so only safe characters are allowed.
 ID_PATTERN = r"^[A-Za-z0-9._-]{1,64}$"
 
@@ -318,7 +358,7 @@ def list_documents(staff: StaffIdentity = Depends(current_staff)) -> list[dict]:
     return database.query_records("documents", company_id=f"eq.{staff.company_id}", order="source_id.asc,created_at.desc")
 
 
-@app.post("/documents", status_code=201)
+@app.post("/documents", status_code=202)
 def upload_document(
     file: UploadFile,
     source_id: str = Form(pattern=ID_PATTERN),
@@ -327,13 +367,15 @@ def upload_document(
     venue: str = Form(default="", max_length=200),
     staff: StaffIdentity = Depends(current_staff),
 ) -> dict:
-    """Upload and index a knowledge file as a new version that is not live until published ("ready")."""
-    from . import rag  # Loaded only here: indexing pulls in the PDF reader and embedding client.
+    """Store a knowledge file privately and queue its indexing; it is not live until published.
 
+    The version is "processing" until the runtime indexes it, then "ready" (or "failed" with an error).
+    """
     existing = database.query_records("documents", company_id=f"eq.{staff.company_id}", source_id=f"eq.{source_id}")
     # A new version of a known document is a replacement.
     authorize(staff, Action.REPLACE_DOCUMENT if existing else Action.UPLOAD_DOCUMENT, company_id=staff.company_id)
-    if any(document["version"] == version for document in existing):
+    # A version whose indexing failed may be uploaded again.
+    if any(document["version"] == version and document["status"] != "failed" for document in existing):
         raise HTTPException(409, f"{source_id} version {version} already exists.")
 
     suffix = Path(file.filename or "").suffix.lower()
@@ -341,7 +383,7 @@ def upload_document(
     if suffix not in DOCUMENT_TYPES:
         raise HTTPException(422, "Only PDF, TXT, and Markdown files are supported.")
     if len(content) > MAX_DOCUMENT_BYTES:
-        raise HTTPException(413, "The file is larger than 10 MB.")
+        raise HTTPException(413, "The file is larger than 4 MB.")
     # Check the bytes themselves, not just the file name.
     if suffix == ".pdf" and not content.startswith(b"%PDF-"):
         raise HTTPException(422, "The file is not a valid PDF.")
@@ -351,29 +393,29 @@ def upload_document(
         except UnicodeDecodeError as exc:
             raise HTTPException(422, "Text and Markdown files must be UTF-8.") from exc
 
-    path = rag.UPLOAD_DIRECTORY / staff.company_id / f"{source_id}_{version}{suffix}"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(content)
-    try:
-        # Invisible to the agent until a knowledge manager publishes this version.
-        chunks = rag.index_document(
-            path, company_id=staff.company_id, source_id=source_id, version=version, title=title, venue=venue,
-        )
-    except Exception as exc:
-        path.unlink(missing_ok=True)
-        if isinstance(exc, (ValueError, PdfReadError)):
-            raise HTTPException(422, "No readable text could be extracted from this file.") from exc
-        raise
+    file_key = f"{staff.company_id}/{source_id}_{version}{suffix}"
+    storage.save_original(file_key, content)
+    database.run_raw_sql(
+        "DELETE FROM documents WHERE company_id = $1 AND source_id = $2 AND version = $3 AND status = 'failed';",
+        [staff.company_id, source_id, version],
+    )
     document = database.insert_record(
         "documents",
         {"company_id": staff.company_id, "source_id": source_id, "version": version, "title": title,
-         "venue": venue, "status": "ready", "uploaded_by": staff.staff_id},
+         "venue": venue, "status": "processing", "uploaded_by": staff.staff_id},
     )
     database.log_audit_event(
         company_id=staff.company_id, actor_id=staff.staff_id, action="upload_document",
-        target_type="document", target_id=document["id"], details={"source_id": source_id, "version": version, "chunks": chunks},
+        target_type="document", target_id=document["id"], details={"source_id": source_id, "version": version},
     )
-    return {**document, "chunks": chunks}
+    # Indexing can outlast an API request, so the runtime does it (in-process when RUN_JOBS_LOCALLY).
+    queue_job(
+        "index", thread_id=f"document:{document['id']}", dedupe_key=f"index:{document['id']}",
+        payload={"document_id": document["id"], "file_key": file_key, "source_id": source_id,
+                 "version": version, "title": title, "venue": venue},
+        company_id=staff.company_id,
+    )
+    return document
 
 
 def activate_version(document_id: str, staff: StaffIdentity, action: Action, from_status: str) -> dict:

@@ -16,8 +16,6 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 EMBEDDING_MODEL = "google/gemini-embedding-2"
 EMBEDDING_DIMENSIONS = 768  # Must match knowledge_chunks.embedding in database.SCHEMA_SQL.
-# Private originals of uploaded knowledge files (the S3 knowledge bucket once deployed).
-UPLOAD_DIRECTORY = Path(__file__).resolve().parent.parent / ".data" / "uploads"
 INSERT_BATCH_SIZE = 50  # Chunks per INSERT, keeping each request to the database small.
 
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)

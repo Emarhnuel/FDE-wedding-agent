@@ -82,17 +82,22 @@ def recover_stuck_jobs(now: datetime) -> dict:
             requeued += 1
     # A run cut off mid-way may already have sent email, so it is never retried automatically.
     for job in database.query_records("jobs", status="eq.running", updated_at=f"lt.{(now - STALE_RUN).isoformat()}"):
-        failed += bool(database.update_records(
+        stopped = database.update_records(
             "jobs",
             {"status": "failed", "last_error": "Runtime session ended before the job finished; staff must review.",
              "updated_at": now.isoformat()},
             id=f"eq.{job['id']}", status="eq.running",
-        ))
+        )
+        failed += bool(stopped)
+        if stopped and job["kind"] == "index":
+            # Otherwise the document would show "processing" forever; it can be uploaded again.
+            database.update_records("documents", {"status": "failed", "error": "Indexing failed. Upload the file again."},
+                                    id=f"eq.{job['payload']['document_id']}", status="eq.processing")
     return {"requeued": requeued, "failed_stuck_runs": failed}
 
 
 def gmail_get(token: str, path: str, **params) -> dict:
-    response = httpx.get(f"{GMAIL_API}/{path}", headers={"Authorization": f"Bearer {token}"}, params=params, timeout=15.0)
+    response = database.http.get(f"{GMAIL_API}/{path}", headers={"Authorization": f"Bearer {token}"}, params=params, timeout=15.0)
     response.raise_for_status()
     return response.json()
 

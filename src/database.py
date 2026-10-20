@@ -9,6 +9,9 @@ load_dotenv()
 
 INSFORGE_URL = os.environ.get("INSFORGE_URL", "").rstrip("/")
 INSFORGE_API_KEY = os.environ.get("INSFORGE_API_KEY", "")
+# One shared, pooled HTTP client for InsForge, HubSpot and Gmail. Reusing connections makes each
+# call ~0.3 s instead of ~1.3 s for a fresh TLS connection. httpx.Client is safe to share across threads.
+http = httpx.Client(timeout=15.0)
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS staff_members (
@@ -69,6 +72,9 @@ CREATE TABLE IF NOT EXISTS documents (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (company_id, source_id, version)
 );
+
+-- Why indexing failed, shown to knowledge managers. Status: processing -> ready (or failed) -> published -> superseded.
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS error TEXT;
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
@@ -155,7 +161,7 @@ def run_raw_sql(query: str, params: list[Any] | None = None) -> dict[str, Any]:
     payload: dict[str, Any] = {"query": query}
     if params is not None:
         payload["params"] = params
-    response = httpx.post(
+    response = http.post(
         f"{INSFORGE_URL}/api/database/advance/rawsql",
         headers=_headers(),
         json=payload,
@@ -173,7 +179,7 @@ def init_schema() -> None:
 
 def query_records(table: str, **filters: str | int) -> list[dict[str, Any]]:
     """Query rows from an InsForge table using PostgREST filters."""
-    response = httpx.get(
+    response = http.get(
         f"{INSFORGE_URL}/api/database/records/{table}",
         headers=_headers(),
         params=filters,
@@ -186,7 +192,7 @@ def query_records(table: str, **filters: str | int) -> list[dict[str, Any]]:
 def insert_record(table: str, record: dict[str, Any], *, upsert: bool = False) -> dict[str, Any]:
     """Insert (or upsert) a single row into an InsForge table and return it."""
     prefer = "resolution=merge-duplicates,return=representation" if upsert else "return=representation"
-    response = httpx.post(
+    response = http.post(
         f"{INSFORGE_URL}/api/database/records/{table}",
         headers=_headers(prefer=prefer),
         json=[record],
@@ -199,7 +205,7 @@ def insert_record(table: str, record: dict[str, Any], *, upsert: bool = False) -
 
 def update_records(table: str, updates: dict[str, Any], **filters: str) -> list[dict[str, Any]]:
     """Update rows matching PostgREST filters and return the updated records."""
-    response = httpx.patch(
+    response = http.patch(
         f"{INSFORGE_URL}/api/database/records/{table}",
         headers=_headers(prefer="return=representation"),
         params=filters,

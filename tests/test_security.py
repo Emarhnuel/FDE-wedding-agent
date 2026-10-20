@@ -147,7 +147,7 @@ def test_fails_closed_when_insforge_not_configured(monkeypatch):
     ],
 )
 def test_fails_closed_on_unexpected_insforge_responses(monkeypatch, response):
-    monkeypatch.setattr(auth.httpx, "get", lambda *args, **kwargs: response)
+    monkeypatch.setattr(database.http, "get", lambda *args, **kwargs: response)
     with pytest.raises(AuthError) as exc:
         authenticate_staff("Bearer some-token")
     assert exc.value.status_code == 503
@@ -158,7 +158,7 @@ def test_fails_closed_on_unexpected_insforge_responses(monkeypatch, response):
     [{}, {"email": "x@example.com"}, {"id": "u1", "role": "anon"}, {"id": "u1", "role": "project_admin"}],
 )
 def test_rejects_sessions_without_an_authenticated_user(monkeypatch, user):
-    monkeypatch.setattr(auth.httpx, "get", lambda *args, **kwargs: httpx.Response(200, json={"user": user}))
+    monkeypatch.setattr(database.http, "get", lambda *args, **kwargs: httpx.Response(200, json={"user": user}))
     with pytest.raises(AuthError) as exc:
         authenticate_staff("Bearer some-token")
     assert exc.value.status_code == 401
@@ -166,7 +166,7 @@ def test_rejects_sessions_without_an_authenticated_user(monkeypatch, user):
 
 def test_fails_closed_when_membership_lookup_unavailable(monkeypatch):
     session = httpx.Response(200, json={"user": {"id": "u1", "email": "a@example.com", "role": "authenticated"}})
-    monkeypatch.setattr(auth.httpx, "get", lambda *args, **kwargs: session)
+    monkeypatch.setattr(database.http, "get", lambda *args, **kwargs: session)
 
     def unavailable(*args, **kwargs):
         raise httpx.ConnectError("database down")

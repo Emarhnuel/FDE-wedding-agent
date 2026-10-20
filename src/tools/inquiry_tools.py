@@ -1,7 +1,6 @@
 import os
 from typing import Any
 
-import httpx
 from dotenv import load_dotenv
 from langchain.tools import ToolRuntime, tool
 
@@ -34,7 +33,7 @@ def _hubspot_headers() -> dict[str, str]:
 
 def find_hubspot_contact_by_email(email: str) -> dict[str, Any] | None:
     """Search HubSpot CRM for a contact by exact email address."""
-    response = httpx.post(
+    response = database.http.post(
         f"{HUBSPOT_BASE_URL}/crm/v3/objects/contacts/search",
         headers=_hubspot_headers(),
         json={
@@ -64,7 +63,7 @@ def get_hubspot_contact(contact_or_email: str) -> dict[str, Any] | None:
     value = contact_or_email.strip()
     if "@" in value:
         return find_hubspot_contact_by_email(value)
-    response = httpx.get(
+    response = database.http.get(
         f"{HUBSPOT_BASE_URL}/crm/v3/objects/contacts/{value}",
         headers=_hubspot_headers(),
         params={"properties": ",".join(HUBSPOT_CONTACT_PROPERTIES)},
@@ -95,7 +94,7 @@ def upsert_hubspot_contact(
 
     if existing:
         contact_id = existing["id"]
-        response = httpx.patch(
+        response = database.http.patch(
             f"{HUBSPOT_BASE_URL}/crm/v3/objects/contacts/{contact_id}",
             headers=_hubspot_headers(),
             json={"properties": properties},
@@ -105,7 +104,7 @@ def upsert_hubspot_contact(
         return response.json()
 
     properties.setdefault("lifecyclestage", "lead")
-    response = httpx.post(
+    response = database.http.post(
         f"{HUBSPOT_BASE_URL}/crm/v3/objects/contacts",
         headers=_hubspot_headers(),
         json={"properties": properties},
@@ -185,6 +184,13 @@ def save_inquiry_draft(
     company_id = runtime.context.company_id
     if not company_id:
         raise ValueError("Missing server-verified company_id in runtime context.")
+    # Rejected rather than rewritten here: the send tool requires the exact saved text, and routine
+    # replies may send without a human reading them first.
+    if "—" in subject + body or "–" in subject + body:
+        raise ValueError(
+            "Rewrite the subject and body without em dashes or en dashes: use a comma, a period, "
+            "or 'to' for ranges (May to October). Then call save_inquiry_draft again."
+        )
 
     contact = upsert_hubspot_contact(recipient, couple_names=couple_names, phone=phone)
     contact_id = str(contact["id"])
