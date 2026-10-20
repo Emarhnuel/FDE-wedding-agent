@@ -1,9 +1,12 @@
 """Supervisor agent tools including guarded email delivery and review flow."""
 
 import base64
+import html
 import os
+import re
 from datetime import UTC, datetime
 from email.message import EmailMessage
+from itertools import groupby
 from typing import Any
 
 import httpx
@@ -36,7 +39,7 @@ def get_gmail_access_token() -> str:
     refresh_token = os.environ.get("GMAIL_REFRESH_TOKEN", "")
     if not (client_id and client_secret and refresh_token):
         raise RuntimeError("GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, and GMAIL_REFRESH_TOKEN must be set in .env")
-    response = httpx.post(
+    response = database.http.post(
         GMAIL_TOKEN_URL,
         data={
             "client_id": client_id,
@@ -50,10 +53,31 @@ def get_gmail_access_token() -> str:
     return response.json()["access_token"]
 
 
+BULLET_PREFIXES = ("- ", "* ", "• ")
+
+
+def body_to_html(body: str) -> str:
+    """Render the plain-text email as simple HTML: paragraphs, "- " bullet lists, escaped text."""
+    parts: list[str] = []
+    for block in re.split(r"\n\s*\n", body.strip()):
+        # Consecutive bullet lines become one list; other consecutive lines become one paragraph.
+        for is_list, group in groupby(block.splitlines(), key=lambda line: line.strip().startswith(BULLET_PREFIXES)):
+            lines = [html.escape(line.strip()[2:].strip() if is_list else line.strip()) for line in group]
+            if is_list:
+                items = "".join(f'<li style="margin:0 0 6px">{line}</li>' for line in lines)
+                parts.append(f'<ul style="margin:0 0 16px;padding-left:22px">{items}</ul>')
+            else:
+                parts.append('<p style="margin:0 0 16px">' + "<br>".join(lines) + "</p>")
+    return (
+        '<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.6;'
+        'color:#1f2a24;max-width:640px">' + "".join(parts) + "</div>"
+    )
+
+
 def send_gmail_message(
     access_token: str, *, recipient: str, subject: str, body: str, reply_to: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Send a plain-text email from the shared Gmail inbox and return Gmail's message record.
+    """Send the email (plain text plus an HTML version) from the shared Gmail inbox; return Gmail's record.
 
     reply_to (the inbound Gmail inquiry payload) threads the reply into the customer's conversation.
     """
@@ -71,8 +95,10 @@ def send_gmail_message(
         if reply_to.get("message_id_header"):
             message["In-Reply-To"] = message["References"] = reply_to["message_id_header"]
     message.set_content(body)
+    # Email apps show the HTML version and fall back to the plain text.
+    message.add_alternative(body_to_html(body), subtype="html")
     payload["raw"] = base64.urlsafe_b64encode(message.as_bytes()).decode()
-    response = httpx.post(
+    response = database.http.post(
         GMAIL_SEND_URL, headers={"Authorization": f"Bearer {access_token}"}, json=payload, timeout=30.0
     )
     response.raise_for_status()
@@ -94,7 +120,7 @@ def record_hubspot_email_note(recipient: str, subject: str, body: str) -> str | 
     contact = get_hubspot_contact(recipient)
     if not contact:
         return None
-    response = httpx.post(
+    response = database.http.post(
         f"{HUBSPOT_BASE_URL}/crm/v3/objects/notes",
         headers=_hubspot_headers(),
         json={
