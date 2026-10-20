@@ -73,6 +73,10 @@ def build_start(job: dict, resuming: bool = False) -> tuple[AgentContext, str] |
             f"New customer inquiry via {payload.get('source', 'web_form')}.\n"
             f"From: {payload['name']} <{payload['email']}>\nPhone: {payload.get('phone') or 'not provided'}\n"
         )
+        # Optional website form fields; Gmail inquiries don't have them.
+        for label, key in (("Preferred venue", "venue"), ("Guest count", "guest_count"), ("Preferred date", "preferred_date")):
+            if payload.get(key):
+                message += f"{label}: {payload[key]}\n"
         if payload.get("subject"):
             # Gmail only threads a reply whose subject matches the customer's email.
             subject = payload["subject"]
