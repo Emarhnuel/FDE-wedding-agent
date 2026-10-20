@@ -10,7 +10,7 @@
 
 > It answers "do you have Wi-Fi?" in seconds. It will **never** quote you $40,000, hold your date, or promise a refund without a staff member signing off first.
 
-This is a **Forward Deployed AI Engineering** course project. We take a vague Upwork brief (*"AI Integration Specialist – CRM conversational agent"*) and turn it into a production-style platform for **Juniper Hollow Weddings & Events**, a fictional venue with three spaces, a lot of rules, and a very busy inbox.
+This is a **Forward Deployed AI Engineering** course project. We take a vague Upwork brief (*"AI Integration Specialist – CRM conversational agent"*) and turn it into a production-style platform for **Juniper Hollow Weddings & Events**, a fictional venue with two spaces (Hollow Brook Barn and The Juniper Glasshouse), a lot of rules, and a very busy inbox.
 
 ---
 
@@ -21,6 +21,7 @@ This is a **Forward Deployed AI Engineering** course project. We take a vague Up
 - [The safety rules](#-the-safety-rules)
 - [Stack](#-stack)
 - [Setup, step by step](#-setup-step-by-step)
+- [Try it locally](#-try-it-locally)
 - [Running the tests](#-running-the-tests)
 - [Deployment](#%EF%B8%8F-deployment)
 - [Status](#-status)
@@ -178,12 +179,12 @@ TEST_EMAIL_RECIPIENT=    # where test emails go (defaults to GMAIL_SENDER)
 
 ### 5. One-time setup: database, knowledge and your admin login
 
-Run this once. It creates the tables (with pgvector), loads and publishes the venue knowledge pack, and creates your first **staff admin** login. Change the email to yours first.
+Run this once. It creates the tables (with pgvector), loads and publishes the venue knowledge pack, and creates the first **staff admin** login. The backend engineer runs it: change the email and password first.
 
 ```bash
 uv run python - <<'EOF'
 from src import database, rag
-from src.security.auth import create_login, send_password_setup
+from src.security.auth import create_login
 
 database.init_schema()
 
@@ -195,17 +196,16 @@ database.run_raw_sql(
     list(pack.values()),
 )
 
-email = "you@example.com"
-user_id = create_login(email, "Venue Admin")
+email, password = "admin@example.com", "choose-a-strong-password"
+user_id = create_login(email, "Venue Admin", password)
 database.insert_record("staff_members", {
     "insforge_user_id": user_id, "email": email, "full_name": "Venue Admin",
     "roles": ["staff_admin", "knowledge_manager", "email_approver"],
 })
-print("Password setup email sent:", send_password_setup(email))
 EOF
 ```
 
-Check your inbox for the InsForge code and choose your password. From then on, new staff are added from the staff portal, and new knowledge versions are uploaded and published there too.
+Give those login details to the staff admin. From then on, the staff admin signs in to the staff portal and adds every other staff member there, choosing each one's email, password and roles. Anyone can change their own password from the portal with a 6-digit code InsForge emails them.
 
 ### 6. Check that it all connects ✅
 
@@ -215,6 +215,31 @@ uv run pytest tests/test_rag.py        # embeds, indexes and searches real knowl
 ```
 
 If both pass, your keys, database and knowledge are working. 🎉
+
+---
+
+## 💻 Try it locally
+
+Open two terminals in the project folder.
+
+```bash
+# Terminal 1: the backend
+uv run uvicorn src.api:app --reload --port 8000
+
+# Terminal 2: the website
+uv run python -m http.server 3000 -d frontend
+```
+
+Then open **http://localhost:3000**. Use `localhost`, not `127.0.0.1`: the backend only accepts requests from `http://localhost:3000` (change this with `ALLOWED_ORIGINS`).
+
+| Page | What to try |
+|---|---|
+| 💌 **Contact Us** | Send an inquiry like a customer would. No login needed |
+| 🔑 **Staff Login** | Sign in with the staff admin login from setup step 5 |
+| 👥 **Staff portal** | As a staff admin, add a staff member with their email, a starting password and roles, or deactivate one |
+| 🔒 **Change password** | Get a 6-digit code by email and choose a new password |
+
+> 🤖 With `RUN_JOBS_LOCALLY=true`, every inquiry you send runs the agent on your machine: it costs model tokens and creates a draft for staff review. Set it to `false` to test the form without running the agent.
 
 ---
 
@@ -256,7 +281,8 @@ One run does everything: it builds the images, applies Terraform, then builds an
 ## 🚧 Status
 
 - ✅ Agents, tools, guardrails, staff roles, knowledge versioning, worker, runtime and cron are built and tested against live services
-- 🔨 Frontend (inquiry form and staff portal): next up
+- ✅ Frontend: contact form, staff login, staff management and password change are built and connected to the backend
+- 🔨 Frontend: review inbox (approve / edit / reject) and knowledge documents pages are next
 - 📝 Terraform and the deploy workflows: scaffolded, being filled in
 
 ---
