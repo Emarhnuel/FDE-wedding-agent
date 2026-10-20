@@ -1000,3 +1000,56 @@ textarea.form-control {
     padding: 2rem 1.5rem;
   }
 }
+
+/* Staff Portal */
+.portal-stack {
+  display: grid;
+  gap: 2rem;
+}
+
+.role-options {
+  border: 0;
+}
+
+.role-options legend {
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--juniper-deep);
+  margin-bottom: 0.45rem;
+}
+
+.role-options label {
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--ink-dark);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  margin-top: 1rem;
+}
+
+.portal-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.portal-table th,
+.portal-table td {
+  text-align: left;
+  padding: 0.75rem 0.6rem;
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: middle;
+}
+
+.portal-table th {
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
