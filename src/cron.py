@@ -92,7 +92,7 @@ def recover_stuck_jobs(now: datetime) -> dict:
 
 
 def gmail_get(token: str, path: str, **params) -> dict:
-    response = httpx.get(f"{GMAIL_API}/{path}", headers={"Authorization": f"Bearer {token}"}, params=params, timeout=15.0)
+    response = database.http.get(f"{GMAIL_API}/{path}", headers={"Authorization": f"Bearer {token}"}, params=params, timeout=15.0)
     response.raise_for_status()
     return response.json()
 
