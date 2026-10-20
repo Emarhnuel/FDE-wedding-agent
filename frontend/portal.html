@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Staff Portal | Juniper Hollow Weddings &amp; Events</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="top-ribbon">
+    Juniper Hollow Team Portal <span>&bull;</span> Staff Access Only
+  </div>
+
+  <header class="site-header">
+    <div class="nav-container">
+      <a href="index.html" class="brand-logo">
+        <span class="brand-title">Juniper Hollow</span>
+        <span class="brand-subtitle">Weddings &amp; Events</span>
+      </a>
+
+      <div class="nav-actions">
+        <a id="link-change-password" href="password.html" class="btn btn-outline">Change Password</a>
+        <button type="button" id="btn-logout" class="btn btn-primary">Sign Out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="section">
+    <div class="container portal-stack">
+      <section class="form-card">
+        <span class="eyebrow">Juniper Hollow Staff Portal</span>
+        <h1 class="heading-md" id="portal-welcome">Loading your account&hellip;</h1>
+        <p id="portal-details" style="color: var(--ink-muted); margin-top: 0.5rem;"></p>
+        <div id="portal-status" class="status-banner" role="status" aria-live="polite"></div>
+      </section>
+
+      <!-- Shown only to staff admins -->
+      <section id="staff-admin-section" class="form-card hidden-panel">
+        <span class="eyebrow">Staff Admin</span>
+        <h2 class="heading-md">Add a Staff Member</h2>
+        <p style="color: var(--ink-muted); margin: 0.5rem 0 1.5rem;">
+          Choose their email, a starting password and their roles, then share the login details with them.
+          They can change the password from this portal.
+        </p>
+
+        <form id="add-staff-form" novalidate>
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="staff-full-name">Full Name *</label>
+              <input type="text" id="staff-full-name" class="form-control" maxlength="200" required />
+            </div>
+            <div class="form-group">
+              <label for="staff-new-email">Work Email *</label>
+              <input type="email" id="staff-new-email" class="form-control" maxlength="320" autocomplete="off" required />
+            </div>
+            <div class="form-group full-width">
+              <label for="staff-new-password">Starting Password *</label>
+              <input type="password" id="staff-new-password" class="form-control" maxlength="128" autocomplete="new-password" required />
+            </div>
+            <fieldset class="form-group full-width role-options">
+              <legend>Roles *</legend>
+              <label><input type="checkbox" name="role" value="email_approver" checked /> Email approver (reviews and sends replies)</label>
+              <label><input type="checkbox" name="role" value="knowledge_manager" /> Knowledge manager (venue documents)</label>
+              <label><input type="checkbox" name="role" value="staff_admin" /> Staff admin (adds and manages staff)</label>
+            </fieldset>
+          </div>
+          <button type="submit" class="btn btn-primary">Add Staff Member</button>
+          <div id="add-staff-status" class="status-banner" role="status" aria-live="polite"></div>
+        </form>
+
+        <h2 class="heading-md" style="margin-top: 2.5rem;">Team</h2>
+        <div class="table-scroll">
+          <table class="portal-table">
+            <thead>
+              <tr><th>Name</th><th>Email</th><th>Roles</th><th>Status</th><th></th></tr>
+            </thead>
+            <tbody id="staff-table-body"></tbody>
+          </table>
+        </div>
+        <div id="staff-list-status" class="status-banner" role="status" aria-live="polite"></div>
+      </section>
+    </div>
+  </main>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
