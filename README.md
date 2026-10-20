@@ -269,10 +269,10 @@ uv run pytest tests/test_security.py           # one file
 
 ## ☁️ Deployment
 
-Three environments, **dev**, **test** and **prod**, each a Terraform workspace with its own state in S3 (locked with an S3 lock file, no DynamoDB needed).
+Two environments, **dev** and **prod**, each a Terraform workspace with its own state in S3 (locked with an S3 lock file, no DynamoDB needed).
 
 - 🟢 **Push to `main`** → GitHub Actions deploys **dev**
-- 🟡 **test** and 🔴 **prod** → run the deploy workflow by hand
+- 🔴 **prod** → run the deploy workflow by hand
 - 💣 **Tearing down** an environment is a manual workflow that asks you to type its name first
 - 🖥️ The same deploy scripts work on your laptop (PowerShell or bash) and in CI
 
