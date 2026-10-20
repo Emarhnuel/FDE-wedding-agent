@@ -1,6 +1,5 @@
 """Staff authentication token verification using InsForge session APIs."""
 
-import secrets
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,7 +10,9 @@ from .. import database
 SESSION_PATH = "/api/auth/sessions/current"
 SIGN_IN_PATH = "/api/auth/sessions"
 USERS_PATH = "/api/auth/users"
-RESET_PASSWORD_PATH = "/api/auth/email/send-reset-password"
+SEND_RESET_CODE_PATH = "/api/auth/email/send-reset-password"
+EXCHANGE_RESET_CODE_PATH = "/api/auth/email/exchange-reset-password-token"
+RESET_PASSWORD_PATH = "/api/auth/email/reset-password"
 
 
 class AuthError(Exception):
@@ -103,36 +104,71 @@ def sign_in(email: str, password: str) -> str:
     return token
 
 
-def create_login(email: str, name: str) -> str:
-    """Create an InsForge login and return its user ID; raises AuthError 409 if the email exists.
+def insforge_message(response: httpx.Response, default: str) -> str:
+    """InsForge's own error message (e.g. a password rule), or the default."""
+    try:
+        return str(response.json().get("message") or default)
+    except ValueError:
+        return default
 
-    The password is random and never shown: the new staff member sets their own through the
-    emailed reset code (send_password_setup). Uses the server-side admin key, never a browser.
+
+def create_login(email: str, name: str, password: str) -> str:
+    """Create an InsForge login with the password the staff admin chose; returns its user ID.
+
+    Raises AuthError 409 if the email exists, 422 if InsForge rejects the password. Uses the
+    server-side admin key, never a browser.
     """
     try:
         response = httpx.post(
             f"{database.INSFORGE_URL}{USERS_PATH}",
             params={"client_type": "server"},
             headers={"Authorization": f"Bearer {database.INSFORGE_API_KEY}"},
-            json={"email": email, "password": secrets.token_urlsafe(32), "name": name},
+            json={"email": email, "password": password, "name": name},
             timeout=15.0,
         )
     except httpx.HTTPError as exc:
         raise AuthError(503, "Authentication service is unavailable.") from exc
     if response.status_code == 409:
         raise AuthError(409, "A login with this email already exists.")
+    if response.status_code == 400:
+        raise AuthError(422, insforge_message(response, "The password does not meet the requirements."))
     if response.status_code not in (200, 201):
         raise AuthError(503, "Authentication service returned an unexpected response.")
     return str(response.json()["user"]["id"])
 
 
-def send_password_setup(email: str) -> bool:
-    """Email the user an InsForge reset code so they choose their own password; True if accepted."""
+def send_password_code(email: str) -> None:
+    """Ask InsForge to email a 6-digit password reset code. InsForge never reveals if the email exists."""
     try:
-        response = httpx.post(f"{database.INSFORGE_URL}{RESET_PASSWORD_PATH}", json={"email": email}, timeout=15.0)
-    except httpx.HTTPError:
-        return False
-    return response.is_success
+        response = httpx.post(f"{database.INSFORGE_URL}{SEND_RESET_CODE_PATH}", json={"email": email}, timeout=15.0)
+    except httpx.HTTPError as exc:
+        raise AuthError(503, "Authentication service is unavailable.") from exc
+    if response.status_code >= 500:
+        raise AuthError(503, "Authentication service returned an unexpected response.")
+
+
+def reset_password(email: str, code: str, new_password: str) -> None:
+    """Exchange the emailed code for a reset token, then set the new password (InsForge code method)."""
+    try:
+        exchange = httpx.post(
+            f"{database.INSFORGE_URL}{EXCHANGE_RESET_CODE_PATH}", json={"email": email, "code": code}, timeout=15.0
+        )
+        if 400 <= exchange.status_code < 500:
+            raise AuthError(400, "That code is invalid or has expired.")
+        token = exchange.json().get("token") if exchange.is_success else None
+        if not token:
+            raise AuthError(503, "Authentication service returned an unexpected response.")
+        reset = httpx.post(
+            f"{database.INSFORGE_URL}{RESET_PASSWORD_PATH}", json={"newPassword": new_password, "otp": token}, timeout=15.0
+        )
+    except httpx.HTTPError as exc:
+        raise AuthError(503, "Authentication service is unavailable.") from exc
+    except ValueError as exc:
+        raise AuthError(503, "Authentication service returned an unexpected response.") from exc
+    if 400 <= reset.status_code < 500:
+        raise AuthError(400, insforge_message(reset, "The new password was not accepted."))
+    if not reset.is_success:
+        raise AuthError(503, "Authentication service returned an unexpected response.")
 
 
 def resolve_staff_membership(insforge_user_id: str) -> dict[str, Any]:
