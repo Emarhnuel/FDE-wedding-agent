@@ -34,6 +34,75 @@
         <div id="portal-status" class="status-banner" role="status" aria-live="polite"></div>
       </section>
 
+      <!-- Shown only to email approvers -->
+      <section id="reviews-section" class="form-card hidden-panel">
+        <div class="section-heading-row">
+          <div>
+            <span class="eyebrow">Email Approver</span>
+            <h2 class="heading-md">Pending Reviews</h2>
+          </div>
+          <button type="button" id="btn-refresh-reviews" class="btn btn-outline">Refresh</button>
+        </div>
+        <p style="color: var(--ink-muted); margin: 0.5rem 0 1rem;">
+          The agent has paused these actions until a staff member approves, edits, or rejects them.
+        </p>
+        <div id="reviews-status" class="status-banner" role="status" aria-live="polite"></div>
+
+        <!-- List of pending reviews -->
+        <div id="review-list" class="review-list"></div>
+
+        <!-- One review, opened from the list -->
+        <div id="review-detail" class="hidden-panel">
+          <button type="button" id="btn-back-to-reviews" class="btn btn-ghost">&larr; All reviews</button>
+
+          <h3 class="review-heading" id="review-title"></h3>
+          <p id="review-meta" style="color: var(--ink-muted); font-size: 0.88rem;"></p>
+
+          <div class="review-block">
+            <h4>Customer's Request</h4>
+            <dl id="review-request" class="review-facts"></dl>
+            <p id="review-request-message" class="review-quote"></p>
+          </div>
+
+          <div class="review-block">
+            <h4>Why Staff Review Is Needed</h4>
+            <ul id="review-reasons" class="review-bullets"></ul>
+          </div>
+
+          <div class="review-block">
+            <h4>Sources the Agent Used</h4>
+            <ul id="review-sources" class="review-bullets"></ul>
+          </div>
+
+          <form id="review-form" class="review-block" novalidate>
+            <h4>Proposed Email</h4>
+            <p id="review-recipient" style="font-size: 0.9rem; margin-bottom: 0.75rem;"></p>
+            <div class="form-group">
+              <label for="review-subject">Subject</label>
+              <input type="text" id="review-subject" class="form-control" maxlength="500" />
+            </div>
+            <div class="form-group">
+              <label for="review-body">Body</label>
+              <textarea id="review-body" class="form-control review-body" maxlength="20000"></textarea>
+            </div>
+            <p style="color: var(--ink-muted); font-size: 0.84rem;">
+              To change the email, edit the subject or body, then use <strong>Approve with My Edits</strong>.
+            </p>
+
+            <div class="review-actions">
+              <button type="button" id="btn-approve" class="btn btn-primary">Approve</button>
+              <button type="button" id="btn-approve-edits" class="btn btn-gold" disabled>Approve with My Edits</button>
+            </div>
+
+            <div class="form-group" style="margin-top: 1.5rem;">
+              <label for="review-reject-note">Reason for rejecting <span class="optional">(optional, shown to the agent)</span></label>
+              <input type="text" id="review-reject-note" class="form-control" maxlength="1000" />
+            </div>
+            <button type="button" id="btn-reject" class="btn btn-outline">Reject</button>
+          </form>
+        </div>
+      </section>
+
       <!-- Shown only to staff admins -->
       <section id="staff-admin-section" class="form-card hidden-panel">
         <span class="eyebrow">Staff Admin</span>
