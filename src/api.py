@@ -27,7 +27,9 @@ from pydantic import BaseModel, Field
 from pypdf.errors import PdfReadError
 
 from . import database
-from .security.auth import AuthError, StaffIdentity, authenticate_staff, create_login, send_password_setup, sign_in
+from .security.auth import (
+    AuthError, StaffIdentity, authenticate_staff, create_login, reset_password, send_password_code, sign_in,
+)
 from .security.permissions import STAFF_ADMIN, Action, authorize
 
 # Trusted server configuration; never taken from request payloads.
@@ -96,6 +98,9 @@ class InquiryIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     email: str = Field(pattern=EMAIL_PATTERN, max_length=320)
     phone: str = Field(default="", max_length=50)
+    venue: str = Field(default="", max_length=200)
+    guest_count: int | None = Field(default=None, ge=1, le=1000)
+    preferred_date: str = Field(default="", max_length=200)
     message: str = Field(min_length=1, max_length=5000)
 
 
@@ -108,6 +113,35 @@ def health() -> dict:
 def login(form: OAuth2PasswordRequestForm = Depends()) -> dict:
     """Sign in with staff email (as username) and password; returns an InsForge access token."""
     return {"access_token": sign_in(form.username, form.password), "token_type": "bearer"}
+
+
+class PasswordCodeIn(BaseModel):
+    email: str = Field(pattern=EMAIL_PATTERN, max_length=320)
+
+
+class PasswordResetIn(PasswordCodeIn):
+    code: str = Field(pattern=r"^\d{6}$")
+    new_password: str = Field(min_length=1, max_length=128)
+
+
+@app.post("/auth/password/code", status_code=202)
+def request_password_code(body: PasswordCodeIn) -> dict:
+    """Email a 6-digit code for changing or resetting a password (InsForge reset, code method)."""
+    send_password_code(body.email.lower())
+    return {"detail": "If this email has a staff login, a 6-digit code is on its way."}
+
+
+@app.post("/auth/password/reset")
+def change_password(body: PasswordResetIn) -> dict:
+    reset_password(body.email.lower(), body.code, body.new_password)
+    return {"detail": "Password changed. Sign in with your new password."}
+
+
+@app.get("/me")
+def who_am_i(staff: StaffIdentity = Depends(current_staff)) -> dict:
+    """The signed-in staff member, so the portal can show the right sections for their roles."""
+    return {"staff_id": staff.staff_id, "email": staff.email, "full_name": staff.full_name,
+            "company_id": staff.company_id, "roles": sorted(staff.roles)}
 
 
 @app.post("/inquiries", status_code=202)
@@ -249,6 +283,7 @@ class StaffIn(BaseModel):
     email: str = Field(pattern=EMAIL_PATTERN, max_length=320)
     full_name: str = Field(min_length=1, max_length=200)
     roles: list[StaffRole] = Field(min_length=1)
+    password: str = Field(min_length=1, max_length=128)  # InsForge enforces its own password rules.
 
 
 class StaffUpdate(BaseModel):
@@ -264,19 +299,19 @@ def list_staff(staff: StaffIdentity = Depends(current_staff)) -> list[dict]:
 
 @app.post("/staff", status_code=201)
 def add_staff(staff_in: StaffIn, staff: StaffIdentity = Depends(current_staff)) -> dict:
-    """Create a staff login and membership; InsForge emails the new member a code to set their password."""
+    """Create a staff login with the password the admin chose; the member can change it later."""
     authorize(staff, Action.MANAGE_STAFF, company_id=staff.company_id)
     email = staff_in.email.lower()
     member = database.insert_record(
         "staff_members",
-        {"insforge_user_id": create_login(email, staff_in.full_name), "company_id": staff.company_id,
+        {"insforge_user_id": create_login(email, staff_in.full_name, staff_in.password), "company_id": staff.company_id,
          "email": email, "full_name": staff_in.full_name, "roles": sorted(set(staff_in.roles))},
     )
     database.log_audit_event(
         company_id=staff.company_id, actor_id=staff.staff_id, action="staff_added",
         target_type="staff_member", target_id=member["id"], details={"roles": member["roles"]},
     )
-    return {**member, "invite_sent": send_password_setup(email)}
+    return member
 
 
 @app.patch("/staff/{staff_id}")
