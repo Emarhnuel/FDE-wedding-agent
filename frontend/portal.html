@@ -103,6 +103,63 @@
         </div>
       </section>
 
+      <!-- Shown only to knowledge managers -->
+      <section id="documents-section" class="form-card hidden-panel">
+        <div class="section-heading-row">
+          <div>
+            <span class="eyebrow">Knowledge Manager</span>
+            <h2 class="heading-md">Knowledge Documents</h2>
+          </div>
+          <button type="button" id="btn-refresh-documents" class="btn btn-outline">Refresh</button>
+        </div>
+        <p style="color: var(--ink-muted); margin: 0.5rem 0 1.5rem;">
+          The agent answers customers only from <strong>live</strong> versions. Upload a file, wait until it is
+          ready, then publish it. To update a document, upload it again with the same Document ID and a new version.
+        </p>
+
+        <form id="upload-document-form" novalidate>
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="document-source-id">Document ID *</label>
+              <input type="text" id="document-source-id" class="form-control" maxlength="64" placeholder="e.g. JH-KB-2026-03" required />
+            </div>
+            <div class="form-group">
+              <label for="document-version">Version *</label>
+              <input type="text" id="document-version" class="form-control" maxlength="64" placeholder="e.g. 3.1" required />
+            </div>
+            <div class="form-group">
+              <label for="document-title">Title *</label>
+              <input type="text" id="document-title" class="form-control" maxlength="200" placeholder="e.g. Company Knowledge Pack" required />
+            </div>
+            <div class="form-group">
+              <label for="document-venue">Venue <span class="optional">(optional, if it covers one venue)</span></label>
+              <select id="document-venue" class="form-control">
+                <option value="">Both venues / general</option>
+                <option value="Hollow Brook Barn">Hollow Brook Barn</option>
+                <option value="The Juniper Glasshouse">The Juniper Glasshouse</option>
+              </select>
+            </div>
+            <div class="form-group full-width">
+              <label for="document-file">File * <span class="optional">(PDF, TXT, or Markdown, up to 4 MB)</span></label>
+              <input type="file" id="document-file" class="form-control" accept=".pdf,.txt,.md" required />
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary">Upload Document</button>
+          <div id="upload-document-status" class="status-banner" role="status" aria-live="polite"></div>
+        </form>
+
+        <h2 class="heading-md" style="margin-top: 2.5rem;">Versions</h2>
+        <div class="table-scroll">
+          <table class="portal-table">
+            <thead>
+              <tr><th>Document ID</th><th>Version</th><th>Title</th><th>Status</th><th>Uploaded</th><th></th></tr>
+            </thead>
+            <tbody id="documents-table-body"></tbody>
+          </table>
+        </div>
+        <div id="documents-status" class="status-banner" role="status" aria-live="polite"></div>
+      </section>
+
       <!-- Shown only to staff admins -->
       <section id="staff-admin-section" class="form-card hidden-panel">
         <span class="eyebrow">Staff Admin</span>
