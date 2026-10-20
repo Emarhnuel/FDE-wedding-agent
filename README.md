@@ -237,6 +237,7 @@ Then open **http://localhost:3000**. Use `localhost`, not `127.0.0.1`: the backe
 | 💌 **Contact Us** | Send an inquiry like a customer would. No login needed |
 | 🔑 **Staff Login** | Sign in with the staff admin login from setup step 5 |
 | ✋ **Pending reviews** | As an email approver, open a paused email, then approve it, edit it before approving, or reject it |
+| 📚 **Knowledge documents** | As a knowledge manager, upload a PDF, TXT or Markdown file (up to 4 MB), wait for *Ready to publish*, then publish it, or roll back to an older version |
 | 👥 **Staff portal** | As a staff admin, add a staff member with their email, a starting password and roles, or deactivate one |
 | 🔒 **Change password** | Get a 6-digit code by email and choose a new password |
 
@@ -282,8 +283,7 @@ One run does everything: it builds the images, applies Terraform, then builds an
 ## 🚧 Status
 
 - ✅ Agents, tools, guardrails, staff roles, knowledge versioning, worker, runtime and cron are built and tested against live services
-- ✅ Frontend: contact form, staff login, review inbox (approve / edit / reject), staff management and password change are built and connected to the backend
-- 🔨 Frontend: knowledge documents page is next
+- ✅ Frontend: contact form, staff login, review inbox (approve / edit / reject), knowledge documents, staff management and password change are built and connected to the backend
 - 📝 Terraform and the deploy workflows: scaffolded, being filled in
 
 ---
