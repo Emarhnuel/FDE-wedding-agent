@@ -159,6 +159,40 @@ def record_interrupts(job: dict, interrupts) -> None:
             )
 
 
+def index_document_job(job: dict) -> str:
+    """Index an uploaded document version; it stays unpublished ("ready") until a knowledge manager publishes it."""
+    from pypdf.errors import PdfReadError
+
+    from . import rag, storage  # Only indexing jobs need the PDF reader and embedding client.
+
+    payload, company_id = job["payload"], job["company_id"]
+    document_filter = {"id": f"eq.{payload['document_id']}", "status": "eq.processing"}
+    try:
+        with storage.original_file(payload["file_key"]) as path:
+            chunks = rag.index_document(
+                path, company_id=company_id, source_id=payload["source_id"], version=payload["version"],
+                title=payload["title"], venue=payload.get("venue", ""),
+            )
+    except Exception as exc:
+        # Leave no partial chunks behind; the version can be uploaded again.
+        database.run_raw_sql(
+            "DELETE FROM knowledge_chunks WHERE company_id = $1 AND source_id = $2 AND version = $3;",
+            [company_id, payload["source_id"], payload["version"]],
+        )
+        unreadable = isinstance(exc, (ValueError, PdfReadError))
+        error = "No readable text could be extracted from this file." if unreadable else "Indexing failed. Upload the file again."
+        database.update_records("documents", {"status": "failed", "error": error}, **document_filter)
+        set_job_status(job["id"], "failed", last_error=f"{type(exc).__name__}: {exc}"[:1000])
+        return "failed"
+    database.update_records("documents", {"status": "ready", "error": None}, **document_filter)
+    database.log_audit_event(
+        company_id=company_id, actor_id="system:indexer", action="document_indexed", target_type="document",
+        target_id=payload["document_id"], details={"chunks": chunks},
+    )
+    set_job_status(job["id"], "completed")
+    return "completed"
+
+
 def run_job(job_id: str) -> str:
     """Claim and run one job; returns its final status."""
     jobs = database.query_records("jobs", id=f"eq.{job_id}", limit=1)
@@ -175,6 +209,8 @@ def run_job(job_id: str) -> str:
         return "already_claimed"
 
     try:
+        if job["kind"] == "index":
+            return index_document_job(job)
         if job["kind"] == "resume":
             context, agent_input = build_resume(job)
         else:
