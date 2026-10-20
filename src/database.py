@@ -73,6 +73,9 @@ CREATE TABLE IF NOT EXISTS documents (
     UNIQUE (company_id, source_id, version)
 );
 
+-- Why indexing failed, shown to knowledge managers. Status: processing -> ready (or failed) -> published -> superseded.
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS error TEXT;
+
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- RAG chunks. Searchable only while their documents row is 'published' (see rag.search_knowledge).
