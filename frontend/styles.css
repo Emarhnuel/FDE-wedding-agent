@@ -1002,9 +1002,13 @@ textarea.form-control {
 }
 
 /* Staff Portal */
+.portal-main {
+  padding: 2rem 0 3rem;
+}
+
 .portal-stack {
   display: grid;
-  gap: 2rem;
+  gap: 1.5rem;
 }
 
 .role-options {
@@ -1065,6 +1069,7 @@ textarea.form-control {
 
 .review-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr); /* Long text wraps inside the card instead of widening it. */
   gap: 0.85rem;
 }
 
@@ -1080,7 +1085,12 @@ textarea.form-control {
 }
 
 .review-item-text {
+  flex: 1;
   min-width: 0;
+}
+
+.review-item .btn {
+  flex-shrink: 0;
 }
 
 .review-item-title {
@@ -1092,8 +1102,10 @@ textarea.form-control {
   font-size: 0.86rem;
   color: var(--ink-muted);
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2; /* At most two lines of the customer's question. */
+  line-clamp: 2;
 }
 
 .review-heading {
