@@ -1,0 +1,33 @@
+# Both images only need pyproject.toml, uv.lock, and src/. Everything else stays out of the build
+# context, so no secrets or local files can end up in an image.
+
+# Secrets and local settings
+.env
+.env.*
+.mcp.json
+.claude/
+.devin/
+.agents/
+
+# Local environments, caches, and data
+.venv/
+.data/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+
+# Not part of the backend images
+.git/
+.github/
+frontend/
+terraform/
+scripts/
+tests/
+docs/
+images/
+production-main/
+claude_help/
+*.md
+*.pdf
+Dockerfile*
+.dockerignore
