@@ -13,8 +13,8 @@ locals {
     cron   = "src.cron.handler"
   }
 
-  # Browser origins allowed by the API (CORS). amplify.tf (bundle 5) adds the website's URL.
-  allowed_origins = var.extra_allowed_origins
+  # Browser origins allowed by the API (CORS): the Amplify website plus any extras (e.g. localhost in dev).
+  allowed_origins = concat([local.website_url], var.extra_allowed_origins)
 
   # Plain settings shared by the Lambda functions and the AgentCore runtime. Keys and connection
   # strings are not here: src/__init__.py loads them from the secret named by APP_SECRET_ARN.
