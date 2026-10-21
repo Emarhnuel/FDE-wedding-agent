@@ -14,3 +14,9 @@ claude_help.md
 .agents/
 images/
 .claude/worktrees/
+# Terraform working files (state can hold secrets; lock file is kept)
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfplan
+crash.log
