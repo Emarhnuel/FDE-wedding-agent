@@ -28,11 +28,15 @@ locals {
       "arn:aws:iam::aws:policy/AmazonSQSFullAccess",
       "arn:aws:iam::aws:policy/AmazonS3FullAccess",
     ]
-    # Reads the jobs queue (event source mapping) and invokes the AgentCore runtime.
-    worker = [
-      "arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole",
-      "arn:aws:iam::aws:policy/BedrockAgentCoreFullAccess",
-    ]
+    # Reads the jobs queue (event source mapping) and runs the jobs, which includes downloading
+    # uploaded originals for indexing; with enable_agentcore it invokes the runtime instead.
+    worker = concat(
+      [
+        "arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole",
+        "arn:aws:iam::aws:policy/AmazonS3FullAccess",
+      ],
+      var.enable_agentcore ? ["arn:aws:iam::aws:policy/BedrockAgentCoreFullAccess"] : [],
+    )
     # Queues Gmail inquiries and retention jobs.
     cron = [
       "arn:aws:iam::aws:policy/AmazonSQSFullAccess",
@@ -64,7 +68,8 @@ resource "aws_iam_role_policy_attachment" "lambda" {
 }
 
 # -----------------------------------------------------------------------------
-# AgentCore runtime: runs agent jobs and document indexing (src/runtime.py)
+# AgentCore runtime: runs agent jobs and document indexing (src/runtime.py) when enable_agentcore
+# is on. The role is kept either way, so switching AgentCore on needs no IAM changes.
 # -----------------------------------------------------------------------------
 
 # Trust policy from the AgentCore Runtime docs, limited to this account's AgentCore resources.

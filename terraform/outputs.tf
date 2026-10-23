@@ -36,7 +36,7 @@ output "ecr_lambda_repository_url" {
 }
 
 output "ecr_agentcore_repository_url" {
-  description = "Push the linux/arm64 AgentCore image here (tag: the git commit SHA)."
+  description = "Push the linux/arm64 AgentCore image here (tag: the git commit SHA); used only with enable_agentcore."
   value       = aws_ecr_repository.app["agentcore"].repository_url
 }
 
@@ -61,8 +61,8 @@ output "knowledge_bucket_name" {
 }
 
 output "agent_runtime_arn" {
-  description = "AgentCore runtime the worker invokes."
-  value       = aws_bedrockagentcore_agent_runtime.app.agent_runtime_arn
+  description = "AgentCore runtime the worker invokes; null while the worker runs jobs itself."
+  value       = var.enable_agentcore ? aws_bedrockagentcore_agent_runtime.app[0].agent_runtime_arn : null
 }
 
 output "lambda_function_names" {

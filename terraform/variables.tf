@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 variable "aws_region" {
-  description = "AWS region; must offer Bedrock AgentCore Runtime and match the bootstrap region."
+  description = "AWS region; must match the bootstrap region (and offer Bedrock AgentCore Runtime if enable_agentcore is on)."
   type        = string
   default     = "us-east-1"
 }
@@ -23,7 +23,7 @@ variable "project_name" {
 }
 
 variable "image_tag" {
-  description = "Tag of the Lambda and AgentCore images in ECR; the deploy script passes the git commit SHA."
+  description = "Tag of the Lambda (and, with enable_agentcore, AgentCore) image in ECR; the deploy script passes the git commit SHA."
   type        = string
   nullable    = false
 }
@@ -83,15 +83,32 @@ variable "extra_allowed_origins" {
 # Compute
 # -----------------------------------------------------------------------------
 
+variable "enable_agentcore" {
+  description = "Run agent jobs on Bedrock AgentCore Runtime instead of inside the worker Lambda. Needs an AgentCore quota above 0 and the linux/arm64 image (the deploy script builds it when ENABLE_AGENTCORE=true)."
+  type        = bool
+  default     = false
+}
+
+variable "worker_max_concurrency" {
+  description = "Most jobs the worker runs at once. Each agent job holds one unit of the account's Lambda concurrency for minutes, so this keeps room for the api and cron functions."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.worker_max_concurrency >= 2 && var.worker_max_concurrency <= 1000
+    error_message = "Use 2-1000 (the range Lambda allows for an SQS event source's maximum concurrency)."
+  }
+}
+
 variable "lambda_settings" {
-  description = "Memory (MB) and timeout (seconds) for each Lambda function."
+  description = "Memory (MB) and timeout (seconds) for each Lambda function. The worker runs whole agent jobs, so it gets the 15-minute maximum."
   type = map(object({
     memory_mb       = number
     timeout_seconds = number
   }))
   default = {
     api    = { memory_mb = 1024, timeout_seconds = 29 }
-    worker = { memory_mb = 512, timeout_seconds = 60 }
+    worker = { memory_mb = 2048, timeout_seconds = 900 }
     cron   = { memory_mb = 1024, timeout_seconds = 300 }
   }
 

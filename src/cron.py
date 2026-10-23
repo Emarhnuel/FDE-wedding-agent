@@ -31,8 +31,10 @@ VENUE_TIMEZONE = ZoneInfo(os.environ.get("VENUE_TIMEZONE", "America/Chicago"))
 ANNIVERSARY_LEAD_DAYS = 7
 REFERRAL_AFTER_DAYS = 90
 REFERRAL_CATCH_UP_DAYS = 14  # Still queue a referral if a few daily runs were missed.
-STALE_DISPATCH = timedelta(minutes=30)  # Dispatched but never claimed by the runtime.
-STALE_RUN = timedelta(hours=9)  # Past AgentCore's 8-hour session maximum.
+STALE_DISPATCH = timedelta(minutes=30)  # Dispatched to AgentCore but never claimed by the runtime.
+# A run still "running" after the longest a job may run (the worker Lambda's timeout, or AgentCore's
+# 8-hour session maximum; Terraform sets JOB_TIMEOUT_MINUTES) plus a margin was cut off.
+STALE_RUN = timedelta(minutes=int(os.environ.get("JOB_TIMEOUT_MINUTES", "480")) + 60)
 
 
 def due_occasion(wedding: date, today: date) -> tuple[str, str] | None:
@@ -84,7 +86,7 @@ def recover_stuck_jobs(now: datetime) -> dict:
     for job in database.query_records("jobs", status="eq.running", updated_at=f"lt.{(now - STALE_RUN).isoformat()}"):
         stopped = database.update_records(
             "jobs",
-            {"status": "failed", "last_error": "Runtime session ended before the job finished; staff must review.",
+            {"status": "failed", "last_error": "The job was cut off before it finished; staff must review.",
              "updated_at": now.isoformat()},
             id=f"eq.{job['id']}", status="eq.running",
         )

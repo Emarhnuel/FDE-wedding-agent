@@ -1,8 +1,12 @@
-# AgentCore Runtime running src/runtime.py from the linux/arm64 image (HTTP protocol: port 8080,
-# /invocations and /ping). The worker invokes it per job; the runtime acknowledges at once and keeps
-# the session busy (add_async_task) until the job finishes. Creating it also creates the DEFAULT
-# endpoint, which always points at the newest version.
+# Optional (var.enable_agentcore, off by default): AgentCore Runtime running src/runtime.py from the
+# linux/arm64 image (HTTP protocol: port 8080, /invocations and /ping). The worker invokes it per
+# job; the runtime acknowledges at once and keeps the session busy (add_async_task) until the job
+# finishes. Creating it also creates the DEFAULT endpoint, which always points at the newest version.
+# While it is off, the worker Lambda runs the jobs itself. New accounts may get an AgentCore quota
+# of 0, which makes creating the runtime fail with ServiceQuotaExceededException.
 resource "aws_bedrockagentcore_agent_runtime" "app" {
+  count = var.enable_agentcore ? 1 : 0
+
   # Runtime names allow only letters, digits, and underscores (up to 48 characters).
   agent_runtime_name = replace("${local.name_prefix}_runtime", "-", "_")
   description        = "Juniper Hollow ${local.environment} agent and document-indexing jobs"
