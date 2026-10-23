@@ -1,6 +1,6 @@
 # Three functions from one image (built --provenance=false, single architecture, as Lambda requires):
 #   api    - FastAPI through Mangum, behind API Gateway
-#   worker - SQS jobs queue -> AgentCore runtime
+#   worker - SQS jobs queue -> runs each agent job itself (or hands it to AgentCore if enable_agentcore)
 #   cron   - Gmail polling and the daily jobs (EventBridge Scheduler, in scheduler.tf)
 
 locals {
@@ -28,6 +28,8 @@ locals {
     ALLOWED_ORIGINS   = join(",", local.allowed_origins)
     LANGSMITH_TRACING = "true"
     LANGSMITH_PROJECT = var.langsmith_project
+    # Longest a job may run, so the daily cron can tell a cut-off run from a slow one.
+    JOB_TIMEOUT_MINUTES = tostring(var.enable_agentcore ? 480 : ceil(var.lambda_settings["worker"].timeout_seconds / 60))
   }
 }
 
@@ -57,7 +59,8 @@ resource "aws_lambda_function" "app" {
   environment {
     variables = merge(
       local.app_environment,
-      each.key == "worker" ? { AGENT_RUNTIME_ARN = aws_bedrockagentcore_agent_runtime.app.agent_runtime_arn } : {},
+      # Without AGENT_RUNTIME_ARN the worker runs the jobs itself (src/worker.py).
+      each.key == "worker" && var.enable_agentcore ? { AGENT_RUNTIME_ARN = aws_bedrockagentcore_agent_runtime.app[0].agent_runtime_arn } : {},
     )
   }
 
@@ -65,10 +68,18 @@ resource "aws_lambda_function" "app" {
 }
 
 # The worker receives jobs from the FIFO queue. Partial batch responses retry only the failed
-# messages (src/worker.py returns batchItemFailures); FIFO allows at most 10 messages per batch.
+# messages (src/worker.py returns batchItemFailures). Running jobs itself, it takes one per
+# invocation so each job gets the full timeout; dispatching to AgentCore is quick, so it takes up to
+# 10 (the FIFO maximum).
 resource "aws_lambda_event_source_mapping" "jobs" {
   event_source_arn        = aws_sqs_queue.jobs.arn
   function_name           = aws_lambda_function.app["worker"].arn
-  batch_size              = 10
+  batch_size              = var.enable_agentcore ? 10 : 1
   function_response_types = ["ReportBatchItemFailures"]
+
+  # Caps the worker's share of the account's Lambda concurrency. AWS recommends this over reserved
+  # concurrency for SQS, and reserved concurrency must leave 100 units unreserved anyway.
+  scaling_config {
+    maximum_concurrency = var.worker_max_concurrency
+  }
 }
