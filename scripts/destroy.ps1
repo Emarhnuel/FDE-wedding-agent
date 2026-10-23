@@ -37,7 +37,7 @@ Assert-Success "Reading the AWS account (run 'aws configure' first)"
 $StateBucket = "$ProjectName-terraform-state-$AwsAccountId"
 
 Write-Host "This permanently deletes $ProjectName-$Environment in account $AwsAccountId ($AwsRegion):"
-Write-Host "the website, API, functions, agent runtime, queues, uploaded knowledge files, and images."
+Write-Host "the website, API, functions, queues, uploaded knowledge files, and images."
 if ($env:CI -ne "true") {
     $confirmation = Read-Host "Type the environment name ($Environment) to confirm"
     if ($confirmation -ne $Environment) { throw "Cancelled." }
@@ -57,9 +57,9 @@ try {
         return
     }
 
-    # Turn on force_destroy first, so the bucket (with every file version) and the ECR repositories
-    # (with their images) can be deleted even when they are not empty. prod keeps it off in normal deploys.
-    Write-Host "==> Allowing the bucket and repositories to be deleted with their contents"
+    # Turn on force_destroy first, so the bucket (with every file version) and the ECR repository
+    # (with its images) can be deleted even when they are not empty. prod keeps it off in normal deploys.
+    Write-Host "==> Allowing the bucket and repository to be deleted with their contents"
     terraform apply -input=false -auto-approve @TfVars "-target=aws_s3_bucket.knowledge" "-target=aws_ecr_repository.app"
     Assert-Success "terraform apply (force destroy)"
 
