@@ -2,18 +2,12 @@
 #
 #   .\scripts\deploy.ps1 -Environment dev        (or prod)
 #
-# Agent jobs run in the worker Lambda. -EnableAgentCore (or $env:ENABLE_AGENTCORE = "true") runs them
-# on Bedrock AgentCore Runtime instead (needs an AgentCore quota above 0) and also builds the
-# linux/arm64 AgentCore image.
-#
 # Needs: aws CLI (logged in), terraform >= 1.10, Docker Desktop (buildx), git.
 # Works in Windows PowerShell 5.1 and PowerShell 7. Same steps as scripts/deploy.sh.
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("dev", "prod")]
-    [string]$Environment,
-
-    [switch]$EnableAgentCore
+    [string]$Environment
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,7 +31,6 @@ $ProjectName = if ($env:PROJECT_NAME) { $env:PROJECT_NAME } else { "juniper-holl
 $AwsRegion = if ($env:DEFAULT_AWS_REGION) { $env:DEFAULT_AWS_REGION } else { "us-east-1" }
 $RootDir = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $NamePrefix = "$ProjectName-$Environment"
-$AgentCore = if ($EnableAgentCore -or $env:ENABLE_AGENTCORE -eq "true") { "true" } else { "false" }
 
 foreach ($tool in "aws", "terraform", "docker", "git") {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { throw "Missing required tool: $tool" }
@@ -58,9 +51,9 @@ if ($env:GITHUB_SHA) {
     if (git -C $RootDir status --porcelain) { $ImageTag = "$ImageTag-local-$(Get-Date -Format yyyyMMddHHmmss)" }
 }
 
-Write-Host "==> Deploying $NamePrefix to account $AwsAccountId ($AwsRegion), image tag $ImageTag, AgentCore $AgentCore"
+Write-Host "==> Deploying $NamePrefix to account $AwsAccountId ($AwsRegion), image tag $ImageTag"
 
-$TfVars = @("-var", "image_tag=$ImageTag", "-var", "enable_agentcore=$AgentCore")
+$TfVars = @("-var", "image_tag=$ImageTag")
 if ($Environment -eq "prod") { $TfVars += "-var-file=prod.tfvars" }
 
 Push-Location (Join-Path $RootDir "terraform")
@@ -72,33 +65,28 @@ try {
     terraform workspace select -or-create $Environment
     Assert-Success "terraform workspace select"
 
-    # 1. The image repositories must exist before the images can be pushed.
-    Write-Host "==> Creating the ECR repositories"
+    # 1. The image repository must exist before the image can be pushed.
+    Write-Host "==> Creating the ECR repository"
     terraform apply -input=false -auto-approve @TfVars "-target=aws_ecr_repository.app" "-target=aws_ecr_lifecycle_policy.app"
-    Assert-Success "terraform apply (ECR repositories)"
+    Assert-Success "terraform apply (ECR repository)"
 
-    # 2. Build and push the images (each skipped if this tag is already in ECR).
+    # 2. Build and push the Lambda image (skipped if this tag is already in ECR).
     Write-Host "==> Logging in to ECR"
     aws ecr get-login-password --region $AwsRegion | docker login --username AWS --password-stdin $Registry
     Assert-Success "docker login"
 
-    $images = @(@{ Repository = "$NamePrefix-lambda"; Platform = "linux/amd64"; Dockerfile = "Dockerfile" })
-    if ($AgentCore -eq "true") {
-        $images += @{ Repository = "$NamePrefix-agentcore"; Platform = "linux/arm64"; Dockerfile = "Dockerfile.agentcore" }
-    }
-    foreach ($image in $images) {
-        if (Test-Command { aws ecr describe-images --region $AwsRegion --repository-name $image.Repository --image-ids "imageTag=$ImageTag" }) {
-            Write-Host "==> $($image.Repository):$ImageTag already in ECR; skipping build"
-            continue
-        }
-        Write-Host "==> Building and pushing $($image.Repository):$ImageTag ($($image.Platform))"
-        # --provenance=false: Lambda and AgentCore need a plain single-platform image manifest.
-        docker buildx build --platform $image.Platform --provenance=false `
-            -f (Join-Path $RootDir $image.Dockerfile) -t "$Registry/$($image.Repository):$ImageTag" --push $RootDir
-        Assert-Success "docker build of $($image.Repository)"
+    $Repository = "$NamePrefix-lambda"
+    if (Test-Command { aws ecr describe-images --region $AwsRegion --repository-name $Repository --image-ids "imageTag=$ImageTag" }) {
+        Write-Host "==> ${Repository}:$ImageTag already in ECR; skipping build"
+    } else {
+        Write-Host "==> Building and pushing ${Repository}:$ImageTag (linux/amd64)"
+        # --provenance=false: Lambda needs a plain single-platform image manifest.
+        docker buildx build --platform linux/amd64 --provenance=false `
+            -f (Join-Path $RootDir "Dockerfile") -t "$Registry/${Repository}:$ImageTag" --push $RootDir
+        Assert-Success "docker build of $Repository"
     }
 
-    # 3. Everything else: queue, secret, functions, API, schedules, website app (and AgentCore if enabled).
+    # 3. Everything else: queue, secret, functions, API, schedules, website app.
     Write-Host "==> Terraform apply"
     terraform apply -input=false -auto-approve @TfVars
     Assert-Success "terraform apply"
