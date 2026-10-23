@@ -31,10 +31,9 @@ VENUE_TIMEZONE = ZoneInfo(os.environ.get("VENUE_TIMEZONE", "America/Chicago"))
 ANNIVERSARY_LEAD_DAYS = 7
 REFERRAL_AFTER_DAYS = 90
 REFERRAL_CATCH_UP_DAYS = 14  # Still queue a referral if a few daily runs were missed.
-STALE_DISPATCH = timedelta(minutes=30)  # Dispatched to AgentCore but never claimed by the runtime.
-# A run still "running" after the longest a job may run (the worker Lambda's timeout, or AgentCore's
-# 8-hour session maximum; Terraform sets JOB_TIMEOUT_MINUTES) plus a margin was cut off.
-STALE_RUN = timedelta(minutes=int(os.environ.get("JOB_TIMEOUT_MINUTES", "480")) + 60)
+# A run still "running" an hour after the worker Lambda's timeout (Terraform sets JOB_TIMEOUT_MINUTES)
+# was cut off.
+STALE_RUN = timedelta(minutes=int(os.environ.get("JOB_TIMEOUT_MINUTES", "15")) + 60)
 
 
 def due_occasion(wedding: date, today: date) -> tuple[str, str] | None:
@@ -74,14 +73,8 @@ def queue_retention_jobs(today: date) -> int:
 
 
 def recover_stuck_jobs(now: datetime) -> dict:
-    """Re-queue jobs the runtime never claimed; fail runs whose runtime session has ended."""
-    requeued = failed = 0
-    stale_dispatch = (now - STALE_DISPATCH).isoformat()
-    for job in database.query_records("jobs", status="eq.dispatched", updated_at=f"lt.{stale_dispatch}"):
-        if database.update_records("jobs", {"status": "queued", "updated_at": now.isoformat()},
-                                   id=f"eq.{job['id']}", status="eq.dispatched"):
-            send_job(job, dedupe_id=f"{job['id']}:{job['attempts']}:{now.date()}")
-            requeued += 1
+    """Fail runs that were cut off (the worker Lambda timed out or crashed mid-job)."""
+    failed = 0
     # A run cut off mid-way may already have sent email, so it is never retried automatically.
     for job in database.query_records("jobs", status="eq.running", updated_at=f"lt.{(now - STALE_RUN).isoformat()}"):
         stopped = database.update_records(
@@ -95,7 +88,7 @@ def recover_stuck_jobs(now: datetime) -> dict:
             # Otherwise the document would show "processing" forever; it can be uploaded again.
             database.update_records("documents", {"status": "failed", "error": "Indexing failed. Upload the file again."},
                                     id=f"eq.{job['payload']['document_id']}", status="eq.processing")
-    return {"requeued": requeued, "failed_stuck_runs": failed}
+    return {"failed_stuck_runs": failed}
 
 
 def gmail_get(token: str, path: str, **params) -> dict:
@@ -192,7 +185,7 @@ def purge_old_conversations(now: datetime) -> int:
     """
     cutoff = (now - timedelta(days=RETENTION_DAYS)).isoformat()
     old = database.query_records("jobs", company_id=f"eq.{COMPANY_ID}", updated_at=f"lt.{cutoff}",
-                                 status="not.in.(queued,dispatched,running)", select="thread_id")
+                                 status="not.in.(queued,running)", select="thread_id")
     recent = database.query_records("jobs", company_id=f"eq.{COMPANY_ID}", updated_at=f"gte.{cutoff}", select="thread_id")
     # Only threads with no recent activity lose their saved conversation state.
     idle_threads = {j["thread_id"] for j in old} - {j["thread_id"] for j in recent}
@@ -205,7 +198,7 @@ def purge_old_conversations(now: datetime) -> int:
     )
     database.run_raw_sql(
         f"DELETE FROM jobs WHERE company_id = '{COMPANY_ID}' AND updated_at < '{cutoff}' "
-        "AND status NOT IN ('queued', 'dispatched', 'running');"
+        "AND status NOT IN ('queued', 'running');"
     )
     return len(idle_threads)
 
