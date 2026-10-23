@@ -1,4 +1,5 @@
 # Lambda image for the api, worker, and cron functions (terraform/lambda.tf sets each handler).
+# The worker runs the agent jobs from this image too, so it carries every dependency in uv.lock.
 # Pattern from uv's AWS Lambda guide. Build for one architecture, without attestations, as Lambda requires:
 #   docker buildx build --platform linux/amd64 --provenance=false -t <ecr repo>:<git sha> .
 
