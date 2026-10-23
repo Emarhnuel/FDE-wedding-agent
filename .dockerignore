@@ -1,5 +1,5 @@
-# Both images only need pyproject.toml, uv.lock, and src/. Everything else stays out of the build
-# context, so no secrets or local files can end up in an image.
+# The Lambda image only needs pyproject.toml, uv.lock, and src/. Everything else stays out of the build
+# context, so no secrets or local files can end up in the image.
 
 # Secrets and local settings
 .env
@@ -16,13 +16,14 @@
 **/*.pyc
 .pytest_cache/
 
-# Not part of the backend images
+# Not part of the backend image
 .git/
 .github/
 frontend/
 terraform/
 scripts/
 tests/
+evals/
 docs/
 images/
 production-main/
