@@ -1,0 +1,73 @@
+# Deploys with scripts/deploy.sh: push to dev -> dev, push to main -> prod, or run by hand.
+#
+# One-time GitHub setup:
+#   - Secrets: AWS_ROLE_ARN (terraform/bootstrap output github_deploy_role_arn) and DEFAULT_AWS_REGION.
+#   - Environments "dev" and "prod"; on prod, add yourself as a required reviewer and allow only main.
+# The deploy role trusts only these two environments (OIDC subject ...:environment:dev|prod), so no
+# AWS keys are stored in GitHub.
+name: Deploy
+
+run-name: Deploy ${{ inputs.environment || (github.ref_name == 'main' && 'prod' || 'dev') }}
+
+on:
+  push:
+    branches: [dev, main]
+    paths-ignore:
+      - "**.md"
+      - "tests/**"
+      - "docs/**"
+      - "images/**"
+      - ".claude/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy
+        type: choice
+        options: [dev, prod]
+        required: true
+
+permissions:
+  id-token: write # request the OIDC token for AWS
+  contents: read # check out the repository
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # A manual run uses the chosen environment; a push to main deploys prod, a push to dev deploys dev.
+    environment: ${{ inputs.environment || (github.ref_name == 'main' && 'prod' || 'dev') }}
+    # One deploy or destroy per environment at a time; never cancel a run mid-apply.
+    concurrency:
+      group: deploy-${{ inputs.environment || (github.ref_name == 'main' && 'prod' || 'dev') }}
+      cancel-in-progress: false
+    env:
+      ENVIRONMENT: ${{ inputs.environment || (github.ref_name == 'main' && 'prod' || 'dev') }}
+      DEFAULT_AWS_REGION: ${{ secrets.DEFAULT_AWS_REGION }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      # The AgentCore image is linux/arm64; QEMU lets this x86 runner build it.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.16.6
+          # The wrapper would capture output and break `terraform output -raw` in the deploy script.
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.DEFAULT_AWS_REGION }}
+          role-session-name: github-deploy-${{ github.run_id }}
+
+      - name: Deploy
+        run: bash scripts/deploy.sh "$ENVIRONMENT"

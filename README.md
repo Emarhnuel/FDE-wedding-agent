@@ -130,7 +130,7 @@ uv sync
 
 ### 3. Get the Gmail credentials 📧
 
-This is the trickiest part. The full click-by-click guide, with fixes for common errors, is in **[docs/gmail-credentials-setup.md](docs/gmail-credentials-setup.md)**. The short version:
+This is the trickiest part. The full click-by-click guide, with fixes for common errors, is in **[docs/deployment-guide.md](docs/deployment-guide.md)** (Part 3.4). The short version:
 
 1. **Create a Google Cloud project** at [console.cloud.google.com](https://console.cloud.google.com).
 2. **Enable the Gmail API.**
@@ -158,7 +158,7 @@ DATABASE_URL=
 # CRM
 HUBSPOT_PRIVATE_APP_TOKEN=
 
-# Gmail (see docs/gmail-credentials-setup.md)
+# Gmail (see docs/deployment-guide.md, Part 3.4)
 GMAIL_CLIENT_ID=
 GMAIL_CLIENT_SECRET=
 GMAIL_REFRESH_TOKEN=

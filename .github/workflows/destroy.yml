@@ -1,0 +1,63 @@
+# Destroys one environment with scripts/destroy.sh. Manual only, and you must type the environment's
+# name to confirm. Never touches the bootstrap state bucket or the GitHub deploy role.
+name: Destroy
+
+run-name: Destroy ${{ inputs.environment }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to destroy
+        type: choice
+        options: [dev, prod]
+        required: true
+      confirm:
+        description: Type the environment name again to confirm
+        type: string
+        required: true
+
+permissions:
+  id-token: write # request the OIDC token for AWS
+  contents: read # check out the repository
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    # Shares the deploy workflow's group, so a destroy never overlaps a deploy of the same environment.
+    concurrency:
+      group: deploy-${{ inputs.environment }}
+      cancel-in-progress: false
+    env:
+      # Inputs are passed through environment variables, never pasted into the script text.
+      ENVIRONMENT: ${{ inputs.environment }}
+      CONFIRMATION: ${{ inputs.confirm }}
+      DEFAULT_AWS_REGION: ${{ secrets.DEFAULT_AWS_REGION }}
+    steps:
+      - name: Check confirmation
+        run: |
+          if [ "$CONFIRMATION" != "$ENVIRONMENT" ]; then
+            echo "Confirmation '$CONFIRMATION' does not match '$ENVIRONMENT'; nothing was destroyed." >&2
+            exit 1
+          fi
+
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.16.6
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.DEFAULT_AWS_REGION }}
+          role-session-name: github-destroy-${{ github.run_id }}
+
+      # GitHub sets CI=true, so the script skips its own typed confirmation (checked above).
+      - name: Destroy
+        run: bash scripts/destroy.sh "$ENVIRONMENT"
