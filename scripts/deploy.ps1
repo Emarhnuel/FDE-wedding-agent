@@ -2,12 +2,18 @@
 #
 #   .\scripts\deploy.ps1 -Environment dev        (or prod)
 #
+# Agent jobs run in the worker Lambda. -EnableAgentCore (or $env:ENABLE_AGENTCORE = "true") runs them
+# on Bedrock AgentCore Runtime instead (needs an AgentCore quota above 0) and also builds the
+# linux/arm64 AgentCore image.
+#
 # Needs: aws CLI (logged in), terraform >= 1.10, Docker Desktop (buildx), git.
 # Works in Windows PowerShell 5.1 and PowerShell 7. Same steps as scripts/deploy.sh.
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("dev", "prod")]
-    [string]$Environment
+    [string]$Environment,
+
+    [switch]$EnableAgentCore
 )
 
 $ErrorActionPreference = "Stop"
@@ -31,6 +37,7 @@ $ProjectName = if ($env:PROJECT_NAME) { $env:PROJECT_NAME } else { "juniper-holl
 $AwsRegion = if ($env:DEFAULT_AWS_REGION) { $env:DEFAULT_AWS_REGION } else { "us-east-1" }
 $RootDir = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $NamePrefix = "$ProjectName-$Environment"
+$AgentCore = if ($EnableAgentCore -or $env:ENABLE_AGENTCORE -eq "true") { "true" } else { "false" }
 
 foreach ($tool in "aws", "terraform", "docker", "git") {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { throw "Missing required tool: $tool" }
@@ -51,9 +58,9 @@ if ($env:GITHUB_SHA) {
     if (git -C $RootDir status --porcelain) { $ImageTag = "$ImageTag-local-$(Get-Date -Format yyyyMMddHHmmss)" }
 }
 
-Write-Host "==> Deploying $NamePrefix to account $AwsAccountId ($AwsRegion), image tag $ImageTag"
+Write-Host "==> Deploying $NamePrefix to account $AwsAccountId ($AwsRegion), image tag $ImageTag, AgentCore $AgentCore"
 
-$TfVars = @("-var", "image_tag=$ImageTag")
+$TfVars = @("-var", "image_tag=$ImageTag", "-var", "enable_agentcore=$AgentCore")
 if ($Environment -eq "prod") { $TfVars += "-var-file=prod.tfvars" }
 
 Push-Location (Join-Path $RootDir "terraform")
@@ -70,15 +77,15 @@ try {
     terraform apply -input=false -auto-approve @TfVars "-target=aws_ecr_repository.app" "-target=aws_ecr_lifecycle_policy.app"
     Assert-Success "terraform apply (ECR repositories)"
 
-    # 2. Build and push both images (skipped if this tag is already in ECR).
+    # 2. Build and push the images (each skipped if this tag is already in ECR).
     Write-Host "==> Logging in to ECR"
     aws ecr get-login-password --region $AwsRegion | docker login --username AWS --password-stdin $Registry
     Assert-Success "docker login"
 
-    $images = @(
-        @{ Repository = "$NamePrefix-lambda"; Platform = "linux/amd64"; Dockerfile = "Dockerfile" },
-        @{ Repository = "$NamePrefix-agentcore"; Platform = "linux/arm64"; Dockerfile = "Dockerfile.agentcore" }
-    )
+    $images = @(@{ Repository = "$NamePrefix-lambda"; Platform = "linux/amd64"; Dockerfile = "Dockerfile" })
+    if ($AgentCore -eq "true") {
+        $images += @{ Repository = "$NamePrefix-agentcore"; Platform = "linux/arm64"; Dockerfile = "Dockerfile.agentcore" }
+    }
     foreach ($image in $images) {
         if (Test-Command { aws ecr describe-images --region $AwsRegion --repository-name $image.Repository --image-ids "imageTag=$ImageTag" }) {
             Write-Host "==> $($image.Repository):$ImageTag already in ECR; skipping build"
@@ -91,7 +98,7 @@ try {
         Assert-Success "docker build of $($image.Repository)"
     }
 
-    # 3. Everything else: queue, secret, functions, AgentCore runtime, API, schedules, website app.
+    # 3. Everything else: queue, secret, functions, API, schedules, website app (and AgentCore if enabled).
     Write-Host "==> Terraform apply"
     terraform apply -input=false -auto-approve @TfVars
     Assert-Success "terraform apply"
