@@ -6,7 +6,7 @@
 ![Deep Agents](https://img.shields.io/badge/Deep%20Agents-0.7-1C3C3C)
 ![pgvector](https://img.shields.io/badge/RAG-pgvector-336791?logo=postgresql&logoColor=white)
 ![AWS](https://img.shields.io/badge/deploy-AWS%20%2B%20Terraform-FF9900?logo=amazonaws&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-live%2C%20no%20mocks-2EA44F)
+![Tests](https://img.shields.io/badge/tests-live%20services-2EA44F)
 
 > It answers "do you have Wi-Fi?" in seconds. It will **never** quote you $40,000, hold your date, or promise a refund without a staff member signing off first.
 
@@ -94,7 +94,7 @@ These are enforced in code, not just in the prompt. The model can't talk its way
 | **Retrieval** | pgvector in InsForge Postgres, Google `gemini-embedding-2` (768 dims) |
 | **Comms & CRM** | Gmail API, HubSpot CRM |
 | **Data & auth** | InsForge (Postgres, staff login) |
-| **Infra** | AWS Lambda (the worker runs the agent jobs; Bedrock AgentCore is an optional switch), API Gateway, SQS, EventBridge Scheduler, S3, Secrets Manager, all in Terraform |
+| **Infra** | AWS Lambda (the worker runs the agent jobs), API Gateway, SQS, EventBridge Scheduler, S3, ECR, Secrets Manager, all in Terraform |
 | **Frontend** | Inquiry form and staff portal on AWS Amplify Hosting |
 | **CI/CD** | GitHub Actions with OIDC (no AWS keys stored in GitHub) |
 | **Observability** | LangSmith |
@@ -247,7 +247,7 @@ Then open **http://localhost:3000**. Use `localhost`, not `127.0.0.1`: the backe
 
 ## 🧪 Running the tests
 
-There are **no mocks**. Every test talks to the real services, and each one uses a throwaway company ID that it cleans up afterwards.
+The tests talk to the **real services**, and each one uses a throwaway company ID that it cleans up afterwards. The one exception is `test_security.py`, which uses pytest's `monkeypatch` to simulate InsForge being down or returning bad answers, so it can prove logins fail closed.
 
 ```bash
 uv run pytest                                  # everything
@@ -271,12 +271,13 @@ uv run pytest tests/test_security.py           # one file
 
 Two environments, **dev** and **prod**, each a Terraform workspace with its own state in S3 (locked with an S3 lock file, no DynamoDB needed).
 
-- 🟢 **Push to `main`** → GitHub Actions deploys **dev**
-- 🔴 **prod** → run the deploy workflow by hand
+- 🟢 **Push to `dev`** → GitHub Actions deploys **dev**
+- 🔴 **Push to `main`** → GitHub Actions deploys **prod**, after you approve the run (the `prod` environment requires a reviewer)
+- 🖐️ Either one can also be run by hand: **Actions → Deploy → Run workflow**
 - 💣 **Tearing down** an environment is a manual workflow that asks you to type its name first
 - 🖥️ The same deploy scripts work on your laptop (PowerShell or bash) and in CI
 
-One run does everything: it builds the images, applies Terraform, then builds and uploads the frontend. Secrets live in AWS Secrets Manager. When the Gmail refresh token is renewed, update it there.
+One run does everything: it builds the Lambda image, applies Terraform, then uploads the frontend. The worker Lambda runs the agent jobs (up to 15 minutes each, at most 2 at a time). Secrets live in AWS Secrets Manager (`juniper-hollow-<env>/app`); fill it after the first deploy, and update the Gmail refresh token there when it is renewed.
 
 ---
 
@@ -284,7 +285,8 @@ One run does everything: it builds the images, applies Terraform, then builds an
 
 - ✅ Agents, tools, guardrails, staff roles, knowledge versioning, worker, runtime and cron are built and tested against live services
 - ✅ Frontend: contact form, staff login, review inbox (approve / edit / reject), knowledge documents, staff management and password change are built and connected to the backend
-- 📝 Terraform and the deploy workflows: scaffolded, being filled in
+- ✅ Terraform, Docker, the deploy and destroy scripts and the GitHub Actions workflows are written; dev is deployed on AWS
+- ✅ A LangSmith evaluation (`evals/`) scores routing, citations, length, tool use and groundedness
 
 ---
 
