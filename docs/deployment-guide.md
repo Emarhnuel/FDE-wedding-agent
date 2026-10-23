@@ -4,8 +4,9 @@ Every step we took to build the Juniper Hollow agent, from an empty folder to th
 It is written in order, so it can be followed as the script for the video. It describes what each
 file does instead of showing its code.
 
-It covers the build, the first AWS deploy up to the **AgentCore quota increase**, and then the
-**LangSmith evaluation** we ran while waiting for the quota (Part 16).
+It covers the build, the first AWS deploy up to the **AgentCore quota increase**, the
+**LangSmith evaluation** we ran while waiting for the quota (Part 16), and the move of the agent from
+AgentCore into the **worker Lambda** when AWS declined the quota (Part 17).
 
 ---
 
@@ -682,3 +683,94 @@ A full run costs model tokens and takes close to an hour, so test small first:
 2. Set the first experiment as the **baseline** in LangSmith, make the fixes, re-run, and compare the
    new experiment against it.
 3. Turn on `AUTO_SEND_ROUTINE` only when routine replies pass reliably.
+
+---
+
+## Part 17. Run the agent in Lambda instead of AgentCore
+
+AWS support declined the first quota request ("Versions per Agent") because the account is new, and
+the other two requests stayed open. So we move the agent into the worker Lambda and keep AgentCore
+as a switch for later.
+
+### 17.1 Confirm AgentCore really is blocked
+1. Write a small probe script, `tests/agentcore_quota_probe.py`. It prints the three AgentCore
+   quotas and tries to create a throwaway runtime called `quota_probe` (unrelated to our agent),
+   deleting it straight away if creation works.
+2. Run `uv run python tests/agentcore_quota_probe.py`. Ours printed all three quotas as `0` and
+   failed with `ServiceQuotaExceededException: maxAgents limit exceeded`. So no AgentCore runtime of
+   any kind can be created on this account yet; the problem isn't our code.
+3. Keep the script: run it again later to see if AWS has raised the quota.
+
+### 17.2 Check the quotas of everything else we use
+1. With the **AWS MCP** in Claude Code, compare each service's **applied** quota with the AWS
+   default: Lambda, API Gateway, SQS, EventBridge Scheduler, S3, Secrets Manager, ECR, Amplify,
+   CloudWatch Logs, IAM, and Fargate (the fallback if Lambda were ever too short).
+2. Everything has quota. The one to plan around: **Lambda concurrency is 10** (the normal default
+   is 1,000), shared by the api, worker and cron functions.
+3. We also learned why the first deploy created no Lambdas: the three functions are one Terraform
+   resource, and the worker's settings needed the AgentCore runtime's ARN, so the AgentCore error
+   stopped all three.
+
+### 17.3 Read the AWS docs for the new design
+With the AWS MCP, look up (about 13 searches):
+- Lambda timeout: **15 minutes** maximum.
+- SQS visibility timeout: at least **6 × the function timeout** (and never shorter than it).
+- SQS trigger **maximum concurrency**: the AWS-recommended way to cap a queue's share of
+  concurrency (minimum 2). Reserved concurrency doesn't work here, because Lambda always keeps 100
+  units unreserved and our account only has 10.
+- FIFO queues: parallel runs are capped by the number of message groups or the maximum
+  concurrency, whichever is lower.
+- Partial batch responses, the 30-second HTTP API limit, Lambda's default internet access (no NAT
+  gateway needed for InsForge, OpenRouter, Gmail and HubSpot), and image and `/tmp` size limits.
+
+### 17.4 Change the worker (`src/worker.py`)
+1. If `AGENT_RUNTIME_ARN` is **not** set (the new default), the worker runs each job itself by calling
+   `runtime.run_job`. It still checks that no other job of the same conversation is running.
+2. If it **is** set, the worker hands the job to AgentCore exactly as before.
+3. `runtime.py`, `agents.py`, the tools, the API and the frontend don't change. A job still runs until
+   the first staff-review pause; the paused run lives in Postgres and the staff decision is a new,
+   short "resume" job, so each job fits in 15 minutes.
+
+### 17.5 Change the stuck-job check (`src/cron.py`)
+The daily cron marks a job as failed when it has been "running" too long. That limit used to be
+fixed at 9 hours (AgentCore's 8-hour maximum). It now comes from `JOB_TIMEOUT_MINUTES`, which
+Terraform sets to 15 in Lambda mode (480 with AgentCore), plus an hour of margin.
+
+### 17.6 Change Terraform
+1. `variables.tf`: add `enable_agentcore` (default **false**) and `worker_max_concurrency` (default
+   **2**); give the worker **2,048 MB and 900 seconds**.
+2. `agentcore.tf`: the runtime is only created when `enable_agentcore` is on.
+3. `lambda.tf`: the worker only gets `AGENT_RUNTIME_ARN` when AgentCore is on; every function gets
+   `JOB_TIMEOUT_MINUTES`; the queue trigger takes **1 job per invocation** (10 with AgentCore) and has
+   **maximum concurrency 2**, leaving 8 of the 10 concurrency units for the api and cron functions.
+4. `sqs.tf` needs no edit: its visibility timeout is already 6 × the worker timeout, so it becomes
+   5,400 seconds (90 minutes).
+5. `iam.tf`: the worker gets S3 access (it now downloads uploaded files for indexing), and the
+   AgentCore policy only when AgentCore is on. The AgentCore role is kept, so switching on needs no
+   IAM change.
+6. `ecr.tf` and `outputs.tf`: the AgentCore repository is kept; `agent_runtime_arn` is empty while
+   AgentCore is off.
+
+### 17.7 Change Docker, the scripts and CI
+1. `Dockerfile`: no change needed. It already installs every dependency, so the worker can run the
+   agent from the same image.
+2. `Dockerfile.agentcore`: kept, and only built when AgentCore is on.
+3. `scripts/deploy.sh` and `deploy.ps1`: read `ENABLE_AGENTCORE` (default `false`; PowerShell also
+   has `-EnableAgentCore`), pass it to Terraform, and build the ARM64 AgentCore image only when it's
+   `true`. Deploys are faster without it.
+4. `deploy.yml`: reads the GitHub variable `ENABLE_AGENTCORE` and skips the QEMU (ARM64 build) step
+   when it's off.
+
+### 17.8 Check the changes before deploying
+1. `terraform validate` and `terraform fmt -check` in a scratch copy.
+2. A read-only `terraform plan` for dev against the real state. Ours showed the three Lambdas being
+   created, the queue trigger with batch size 1 and maximum concurrency 2, the visibility timeout
+   going from 360 to 5,400 seconds, and no AgentCore runtime.
+3. Syntax checks: `bash -n` for the bash script, the PowerShell parser for the PowerShell script,
+   and `actionlint` for the workflows.
+
+### 17.9 Deploy and switch back later
+1. Push to `dev` (or run **Actions → Deploy → `dev`**). The deploy now creates the Lambdas.
+2. Fill the `juniper-hollow-dev/app` secret, then test the website.
+3. When AWS raises the AgentCore quota (the probe script creates its test runtime), add the GitHub
+   variable `ENABLE_AGENTCORE = true` and deploy again. No code change is needed.
