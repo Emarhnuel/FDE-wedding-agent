@@ -94,7 +94,7 @@ These are enforced in code, not just in the prompt. The model can't talk its way
 | **Retrieval** | pgvector in InsForge Postgres, Google `gemini-embedding-2` (768 dims) |
 | **Comms & CRM** | Gmail API, HubSpot CRM |
 | **Data & auth** | InsForge (Postgres, staff login) |
-| **Infra** | AWS Bedrock AgentCore, Lambda, API Gateway, SQS, EventBridge Scheduler, S3, Secrets Manager, all in Terraform |
+| **Infra** | AWS Lambda (the worker runs the agent jobs; Bedrock AgentCore is an optional switch), API Gateway, SQS, EventBridge Scheduler, S3, Secrets Manager, all in Terraform |
 | **Frontend** | Inquiry form and staff portal on AWS Amplify Hosting |
 | **CI/CD** | GitHub Actions with OIDC (no AWS keys stored in GitHub) |
 | **Observability** | LangSmith |
