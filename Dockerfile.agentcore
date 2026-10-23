@@ -1,4 +1,6 @@
-# AgentCore Runtime image running src/runtime.py (agent jobs and document indexing).
+# AgentCore Runtime image running src/runtime.py (agent jobs and document indexing). Only used when
+# AgentCore is switched on (ENABLE_AGENTCORE=true / enable_agentcore); otherwise the worker Lambda
+# runs the jobs from the image in Dockerfile.
 # AgentCore requires linux/arm64, port 8080, and the /invocations and /ping endpoints (served by
 # BedrockAgentCoreApp). Build without attestations:
 #   docker buildx build --platform linux/arm64 --provenance=false -f Dockerfile.agentcore -t <ecr repo>:<git sha> .
