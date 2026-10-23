@@ -4,9 +4,8 @@ Every step we took to build the Juniper Hollow agent, from an empty folder to th
 It is written in order, so it can be followed as the script for the video. It describes what each
 file does instead of showing its code.
 
-It covers the build, the first AWS deploy up to the **AgentCore quota increase**, the
-**LangSmith evaluation** we ran while waiting for the quota (Part 16), and the move of the agent from
-AgentCore into the **worker Lambda** when AWS declined the quota (Part 17).
+It covers the build, the first AWS deploy (Part 14), and the **LangSmith evaluation** of the agent
+(Part 15).
 
 ---
 
@@ -23,8 +22,8 @@ Juniper Hollow Weddings & Events is a fictional venue with two spaces. The syste
 - gives staff a portal to approve, edit or reject emails, manage knowledge documents, and manage staff.
 
 The stack: Deep Agents, OpenRouter models, InsForge (Postgres with pgvector, and staff login),
-HubSpot, Gmail, LangSmith, and AWS (Bedrock AgentCore, Lambda, API Gateway, SQS, EventBridge
-Scheduler, S3, Secrets Manager, ECR, Amplify), all deployed with Terraform and GitHub Actions.
+HubSpot, Gmail, LangSmith, and AWS (Lambda, API Gateway, SQS, EventBridge Scheduler, S3,
+Secrets Manager, ECR, Amplify), all deployed with Terraform and GitHub Actions.
 
 ---
 
@@ -181,7 +180,7 @@ The Client ID, Client secret and sender stay the same; only the refresh token ch
    dependencies: Deep Agents, LangChain, the OpenRouter and OpenAI LangChain packages, the text
    splitter, pypdf, pydantic, LangSmith, httpx and python-dotenv. A `dev` group holds pytest. More
    dependencies are added as the build goes on (FastAPI, Mangum, boto3, the Postgres checkpointer,
-   psycopg, bedrock-agentcore, python-multipart).
+   psycopg, python-multipart), plus uvicorn in the `dev` group for running the API locally.
 5. Run `uv sync`. It creates `.venv` and writes **`uv.lock`**, which pins every version. Commit
    `uv.lock` (we ignored it at first, then started tracking it so builds are repeatable).
 6. Create the empty package layout so every file has its place:
@@ -327,22 +326,22 @@ leaves a draft stuck.
 - `sync_state`: where the Gmail poll left off.
 - An `error` column on documents for failed indexing.
 
-### 6.15 `runtime.py`: the AgentCore entry point
-Runs one job at a time: starts a new agent run, or resumes a paused one with the staff decision.
+### 6.15 `runtime.py`: the job runner
+Runs one job: starts a new agent run, or resumes a paused one with the staff decision.
 Paused runs are saved in Postgres (the LangGraph Postgres checkpointer), so they can wait for days.
 It also runs the **index** job for uploaded documents (`processing` → `ready` or `failed`). On AWS
-it runs inside Bedrock AgentCore; locally, jobs run in a background thread when
-`RUN_JOBS_LOCALLY=true`.
+the worker Lambda calls it; locally, jobs run in a background thread when `RUN_JOBS_LOCALLY=true`.
 
 ### 6.16 `worker.py`: the queue worker
-A Lambda triggered by the SQS jobs queue. It claims each job and hands it to AgentCore without
-waiting for it to finish, and reports only failed messages back to SQS so they are retried.
+A Lambda triggered by the SQS jobs queue, one job per invocation. It checks that no other job of the
+same conversation is running, runs the job with `runtime.run_job` (up to 15 minutes; a job ends at the
+first staff-review pause), and reports only failed messages back to SQS so they are retried.
 
 ### 6.17 `cron.py`: the scheduled jobs
 - **Every 8 minutes:** polls Gmail for new customer emails and queues each one as a job. Replies
   stay in the same Gmail thread.
-- **Every day:** queues retention jobs for couples with an anniversary coming up, recovers stuck
-  jobs, and deletes conversation data older than **120 days** (drafts and audit logs are kept).
+- **Every day:** queues retention jobs for couples with an anniversary coming up, marks jobs cut
+  off by the worker's timeout as failed, and deletes conversation data older than **120 days** (drafts and audit logs are kept).
 
 ### 6.18 `storage.py`: uploaded files
 Stores the original uploaded file in the S3 knowledge bucket when deployed, or in `.data/uploads`
@@ -428,28 +427,30 @@ Two environments, **dev** and **prod**, each a Terraform workspace with its own 
   longer log retention, buckets protected, higher API limits). No secrets go in these files.
 - `main.tf`: shared names and tags, and a guard that only allows the `dev` and `prod` workspaces.
 - `s3.tf`: the private knowledge uploads bucket.
-- `sqs.tf`: the FIFO jobs queue and its dead-letter queue.
+- `sqs.tf`: the FIFO jobs queue and its dead-letter queue. The visibility timeout is 6 × the worker's
+  timeout, as AWS recommends for Lambda.
 - `secrets.tf`: the app secret, **created empty**. You fill it in by hand later, so keys never
   touch Terraform.
-- `ecr.tf`: two image repositories (Lambda and AgentCore), with tags that can't be overwritten.
-- `iam.tf`: the roles for the Lambdas and the AgentCore runtime.
-- `lambda.tf`: the api, worker and cron Lambdas, all from one image, plus the SQS trigger.
-- `agentcore.tf`: the Bedrock AgentCore runtime that runs the agent.
+- `ecr.tf`: the Lambda image repository, with tags that can't be overwritten.
+- `iam.tf`: the roles for the three Lambdas.
+- `lambda.tf`: the api, worker and cron Lambdas, all from one image, plus the SQS trigger. The worker
+  runs the agent jobs: 2,048 MB, the 15-minute maximum timeout, one job per invocation, and at most 2
+  jobs at once (the trigger's maximum concurrency).
 - `api_gateway.tf`: the HTTP API in front of the api Lambda, with CORS and throttling.
 - `scheduler.tf`: Gmail polling every 8 minutes and the daily job at 7 am Chicago time.
 - `amplify.tf`: the website on Amplify Hosting, on its default address.
 - `outputs.tf`: the website and API addresses and everything the deploy script needs.
 
-### 10.3 Docker images
-- `Dockerfile`: the Lambda image (x86) for the api, worker and cron functions.
-- `Dockerfile.agentcore`: the AgentCore image (ARM64), listening on port 8080.
-- `.dockerignore`: keeps secrets, tests, docs, the frontend and Terraform out of the images.
+### 10.3 Docker image
+- `Dockerfile`: the Lambda image (x86) for the api, worker and cron functions. The worker runs the
+  agent from it, so it carries every dependency in `uv.lock`.
+- `.dockerignore`: keeps secrets, tests, evals, docs, the frontend and Terraform out of the image.
 
 ### 10.4 Deploy and destroy scripts (`scripts/`)
 `deploy.sh` and `deploy.ps1` do the same steps on a laptop or in CI:
 1. set up Terraform and pick the environment's workspace;
-2. create the image repositories;
-3. build and push both images, tagged with the git commit (skipped if already pushed);
+2. create the image repository;
+3. build and push the Lambda image, tagged with the git commit (skipped if already pushed);
 4. apply the rest of Terraform;
 5. write the API address into `config.js` and publish the website to Amplify;
 6. warn if the app secret is still empty.
@@ -467,8 +468,8 @@ Two environments, **dev** and **prod**, each a Terraform workspace with its own 
 
 ### 11.1 Create the AWS account
 1. Sign up at **aws.amazon.com**.
-2. Choose the **Paid plan**. Bedrock AgentCore is not available on the Free plan. The Paid plan is
-   pay-as-you-go with no minimum, and your sign-up credits are used first.
+2. Choose a plan. We chose the **Paid plan**: pay-as-you-go with no minimum, and your sign-up
+   credits are used first.
 3. Recommended: in **Billing → Budgets**, create a small budget alert (for example $10).
 
 ### 11.2 Install Terraform and the AWS CLI
@@ -528,53 +529,63 @@ keys never go there either.
      Ignore them.
    - If nothing new needs pushing, start it by hand: **Actions → Deploy → Run workflow**, set **Use
      workflow from** to `dev` and **Environment** to `dev`, then click **Run workflow**.
-2. Open the run and watch the **Deploy** step. It sets up Terraform, creates the image
-   repositories, builds and pushes both images, and applies Terraform. The first run is slow
-   because both images are built.
+2. Open the run and watch the **Deploy** step. It sets up Terraform, creates the image repository,
+   builds and pushes the Lambda image, applies Terraform, and publishes the website. The first run is
+   the slowest because the image is built from scratch.
+3. The end of the **Deploy** step's log prints two addresses:
+   - **Website:** `https://dev.<app id>.amplifyapp.com`. In the AWS console it is also under
+     **Amplify → All apps → `juniper-hollow-dev` → branch `dev`**.
+   - **API:** the API Gateway address, also under **API Gateway → APIs → `juniper-hollow-dev`**
+     (Invoke URL). The website already knows it through `config.js`.
+4. The log ends with a warning that the app secret has no value yet. That is expected the first time.
 
-Our first run created the image repositories, the secret, the queues, the bucket, the roles, the
-API and the website app, then **failed** when it tried to create the AgentCore runtime:
-
-> `ServiceQuotaExceededException: maxAgents limit exceeded for account ...`
-
----
-
-## Part 15. Fix the AgentCore quota (where we are now)
-
-**Why it failed:** new AWS accounts can start with an AgentCore quota of **0**, even on the Paid
-plan. Each quota shows two numbers:
-- **Applied account-level quota value**: what your account is actually allowed. Ours was **0**.
-- **AWS default quota value**: what accounts normally get. This is not what your account has.
-
-**How to check:**
+### 14.1 Fill the app secret
+The functions can't start until the app's keys are in Secrets Manager.
 1. In the AWS console, set the region (top right) to **N. Virginia (us-east-1)**.
-2. Open **Service Quotas → AWS services → Amazon Bedrock AgentCore**.
-3. Look at **Total Agents per Account**, **Endpoints per Agent** and **Versions per Agent**. If the
-   applied value is 0, the deploy can't create the runtime.
+2. Open **Secrets Manager → Secrets → `juniper-hollow-dev/app`**.
+3. In the **Secret value** box, click **Retrieve secret value**. The secret is empty, so click **Set
+   secret value**.
+4. Choose the **Plaintext** tab and delete the `{}` that is there.
+5. Paste a JSON object with these 10 keys and your values from `.env`: `OPENROUTER_API_KEY`,
+   `INSFORGE_URL`, `INSFORGE_API_KEY`, `DATABASE_URL`, `HUBSPOT_PRIVATE_APP_TOKEN`, `GMAIL_CLIENT_ID`,
+   `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `GMAIL_SENDER`, `LANGSMITH_API_KEY`.
+   - Turn each `.env` line `NAME=value` into `"NAME": "value"`, wrap them all in `{ }`, and put a
+     comma between entries but none after the last one.
+   - Leave out `RUN_JOBS_LOCALLY` and `TEST_EMAIL_RECIPIENT` (they are only for your computer), and
+     `LANGSMITH_TRACING` and `LANGSMITH_PROJECT` (Terraform already sets them as plain settings).
+6. Check that the editor shows **0 errors**, then click **Save**.
 
-**How to fix it:**
-1. Open **Total Agents per Account** → **Request increase at account level**. Enter the AWS default
-   value (the form won't accept less; for us that was **1000**) → **Request**.
-2. Do the same for **Endpoints per Agent** (default **10**). We only use the built-in DEFAULT
-   endpoint, so 10 is plenty.
-3. Do the same for **Versions per Agent** with its default value. Every deploy with a new image
-   creates a new version.
-4. Track the requests in **Service Quotas → Quota request history**. Approval can take from a few
-   hours to a day or two. If a request becomes a support case, reply that it is a new paid account
-   deploying one agent runtime.
-5. Once all three show **Approved**, run **Actions → Deploy → Run workflow → `dev`** again. No code
-   change is needed: everything created before the failure is kept, so the run only adds what is
-   left.
+No redeploy is needed; the functions read the secret when they start. While the Google app is in
+Testing mode, renew `GMAIL_REFRESH_TOKEN` here every 7 days (see Part 3.4).
+
+### 14.2 Check the AWS quotas we depend on
+New AWS accounts start with some quotas lower than the AWS defaults.
+1. Open **Service Quotas → AWS services**, pick a service, and compare the **applied account-level
+   quota value** (what your account really has) with the **AWS default quota value** (what accounts
+   normally get).
+2. Ours: **Lambda concurrent executions is 10** (the default is 1,000), shared by the api, worker and
+   cron functions. That is why the worker's queue trigger has a maximum concurrency of 2, leaving 8
+   for the website's API and the cron. Everything else we use (API Gateway, SQS, EventBridge
+   Scheduler, S3, ECR, Secrets Manager, Amplify, CloudWatch Logs, IAM) is at its default.
+
+### 14.3 Test dev, then prod
+1. Open the website address, send an inquiry from **Contact Us**, sign in as the staff admin, and
+   approve the review. Logs are in **CloudWatch** (the Lambda functions) and **LangSmith** (the agent
+   runs).
+2. Merging `dev` into `main` deploys prod once you approve the run in GitHub Actions. Fill
+   **`juniper-hollow-prod/app`** the same way only when you're ready to switch: dev and prod with the
+   same Gmail and InsForge keys would both poll the same inbox every 8 minutes. Until it is filled,
+   prod's cron fails every 8 minutes, which only adds error logs in CloudWatch.
 
 ---
 
-## Part 16. Evaluate the agent with LangSmith
+## Part 15. Evaluate the agent with LangSmith
 
-While AWS reviews the quota, we measure how well the agent behaves. The architecture doc requires a
+Next we measure how well the agent behaves. The architecture doc requires a
 LangSmith evaluation, and `AUTO_SEND_ROUTINE` stays off until routine replies pass it. Everything in
 this part runs on your own computer; it doesn't need the AWS deploy.
 
-### 16.1 Research the LangSmith docs
+### 15.1 Research the LangSmith docs
 1. Connect the **LangChain docs MCP** to Claude Code so it can read docs.langchain.com directly.
 2. Read the LangSmith sections on **datasets**, **running an evaluation with the SDK**, **evaluator
    types**, and **analyzing experiments**. We had a Claude Code subagent do about 25 lookups and save
@@ -588,7 +599,7 @@ this part runs on your own computer; it doesn't need the AWS deploy.
 4. Decide SDK or UI: we run everything from code with the SDK, so the dataset, the evaluators and the
    pass rules live in the repo. The LangSmith UI is where we read and compare the results.
 
-### 16.2 Decide what to measure (7 checks)
+### 15.2 Decide what to measure (7 checks)
 
 | # | Check | Type | Applies to |
 |---|---|---|---|
@@ -604,7 +615,7 @@ The safety rules (1 and 2) are code checks on purpose: a safety pass/fail should
 judge model that can be wrong. The dash rule isn't checked because `save_inquiry_draft` already
 rejects dashes in code.
 
-### 16.3 Create the dataset (`evals/dataset.py`)
+### 15.3 Create the dataset (`evals/dataset.py`)
 1. Pick the examples. The docs suggest starting with 10 to 20 hand-picked ones; we use **13**:
    - 5 routine FAQs: guest capacity, rain plan, dogs, music end time, wheelchair access;
    - 2 pricing, 2 date hold or booking, 1 mixed (a FAQ plus a refund question), 1 complaint;
@@ -622,7 +633,7 @@ rejects dashes in code.
 4. From the project root, run `uv run python -m evals.dataset`. It creates the dataset
    `juniper-hollow-inquiries` in LangSmith, and does nothing if it already exists.
 
-### 16.4 Write the target function (`evals/run.py`)
+### 15.4 Write the target function (`evals/run.py`)
 The target runs one example through the agent and returns what the evaluators need.
 1. **Use the real inquiry path:** build the agent's message with the same `runtime.build_start` that
    production uses, then run the supervisor.
@@ -639,7 +650,7 @@ The target runs one example through the agent and returns what the evaluators ne
 6. **Clean up afterwards:** delete the run's drafts, audit rows and test HubSpot contacts. The
    published eval knowledge is kept for the next run.
 
-### 16.5 Write the evaluators (`evals/evaluators.py`)
+### 15.5 Write the evaluators (`evals/evaluators.py`)
 1. Write one Python function per check. Each returns a named score and a comment explaining it.
 2. Each evaluator reads the example's category and **skips** examples it doesn't apply to, so the
    averages aren't diluted. We checked in the SDK source that a skip records no score.
@@ -648,7 +659,7 @@ The target runs one example through the agent and returns what the evaluators ne
 4. **The "search before draft" check** gives partial credit (the fraction of expected steps seen in
    order), as the LangSmith docs show.
 
-### 16.6 Smoke-test before the full run
+### 15.6 Smoke-test before the full run
 A full run costs model tokens and takes close to an hour, so test small first:
 1. `uv run python -m evals.run --limit 1 --no-upload` runs one example and records nothing in
    LangSmith.
@@ -657,7 +668,7 @@ A full run costs model tokens and takes close to an hour, so test small first:
 3. Check that each evaluator scores, the comments make sense, and the cleanup removed the test drafts
    and HubSpot contacts.
 
-### 16.7 Run the full experiment
+### 15.7 Run the full experiment
 1. From the project root, run `uv run python -m evals.run`. There's no need to activate the venv or
    `cd` into `evals`; `uv run` uses the project's environment.
 2. Each example takes about 2 to 4 minutes, sometimes much longer. Two run at a time, so 13 examples
@@ -666,7 +677,7 @@ A full run costs model tokens and takes close to an hour, so test small first:
    run on your computer, so shutting down stops both and skips the cleanup.
 4. The terminal prints the average for each check and the comment for every failure.
 
-### 16.8 Read the results in LangSmith
+### 15.8 Read the results in LangSmith
 1. Open **Datasets & Experiments → `juniper-hollow-inquiries` → Experiments**.
 2. The progress bar has two lines: **runs completed** (the agent finished) and **runs evaluated** (our
    evaluators scored it). The second one lags behind the first.
@@ -677,100 +688,9 @@ A full run costs model tokens and takes close to an hour, so test small first:
 5. Open the **evaluator run** to read the judge's reasoning.
 6. We also checked progress and read the drafts from Claude Code with the **LangSmith MCP**.
 
-### 16.9 Turn the results into next steps
+### 15.9 Turn the results into next steps
 1. Sort each failure into **a real agent problem** (fix the prompts or code) or **a wrong check** (fix
    the evaluator). Read the actual draft in the trace before deciding.
 2. Set the first experiment as the **baseline** in LangSmith, make the fixes, re-run, and compare the
    new experiment against it.
 3. Turn on `AUTO_SEND_ROUTINE` only when routine replies pass reliably.
-
----
-
-## Part 17. Run the agent in Lambda instead of AgentCore
-
-AWS support declined the first quota request ("Versions per Agent") because the account is new, and
-the other two requests stayed open. So we move the agent into the worker Lambda and keep AgentCore
-as a switch for later.
-
-### 17.1 Confirm AgentCore really is blocked
-1. Write a small probe script, `tests/agentcore_quota_probe.py`. It prints the three AgentCore
-   quotas and tries to create a throwaway runtime called `quota_probe` (unrelated to our agent),
-   deleting it straight away if creation works.
-2. Run `uv run python tests/agentcore_quota_probe.py`. Ours printed all three quotas as `0` and
-   failed with `ServiceQuotaExceededException: maxAgents limit exceeded`. So no AgentCore runtime of
-   any kind can be created on this account yet; the problem isn't our code.
-3. Keep the script: run it again later to see if AWS has raised the quota.
-
-### 17.2 Check the quotas of everything else we use
-1. With the **AWS MCP** in Claude Code, compare each service's **applied** quota with the AWS
-   default: Lambda, API Gateway, SQS, EventBridge Scheduler, S3, Secrets Manager, ECR, Amplify,
-   CloudWatch Logs, IAM, and Fargate (the fallback if Lambda were ever too short).
-2. Everything has quota. The one to plan around: **Lambda concurrency is 10** (the normal default
-   is 1,000), shared by the api, worker and cron functions.
-3. We also learned why the first deploy created no Lambdas: the three functions are one Terraform
-   resource, and the worker's settings needed the AgentCore runtime's ARN, so the AgentCore error
-   stopped all three.
-
-### 17.3 Read the AWS docs for the new design
-With the AWS MCP, look up (about 13 searches):
-- Lambda timeout: **15 minutes** maximum.
-- SQS visibility timeout: at least **6 × the function timeout** (and never shorter than it).
-- SQS trigger **maximum concurrency**: the AWS-recommended way to cap a queue's share of
-  concurrency (minimum 2). Reserved concurrency doesn't work here, because Lambda always keeps 100
-  units unreserved and our account only has 10.
-- FIFO queues: parallel runs are capped by the number of message groups or the maximum
-  concurrency, whichever is lower.
-- Partial batch responses, the 30-second HTTP API limit, Lambda's default internet access (no NAT
-  gateway needed for InsForge, OpenRouter, Gmail and HubSpot), and image and `/tmp` size limits.
-
-### 17.4 Change the worker (`src/worker.py`)
-1. If `AGENT_RUNTIME_ARN` is **not** set (the new default), the worker runs each job itself by calling
-   `runtime.run_job`. It still checks that no other job of the same conversation is running.
-2. If it **is** set, the worker hands the job to AgentCore exactly as before.
-3. `runtime.py`, `agents.py`, the tools, the API and the frontend don't change. A job still runs until
-   the first staff-review pause; the paused run lives in Postgres and the staff decision is a new,
-   short "resume" job, so each job fits in 15 minutes.
-
-### 17.5 Change the stuck-job check (`src/cron.py`)
-The daily cron marks a job as failed when it has been "running" too long. That limit used to be
-fixed at 9 hours (AgentCore's 8-hour maximum). It now comes from `JOB_TIMEOUT_MINUTES`, which
-Terraform sets to 15 in Lambda mode (480 with AgentCore), plus an hour of margin.
-
-### 17.6 Change Terraform
-1. `variables.tf`: add `enable_agentcore` (default **false**) and `worker_max_concurrency` (default
-   **2**); give the worker **2,048 MB and 900 seconds**.
-2. `agentcore.tf`: the runtime is only created when `enable_agentcore` is on.
-3. `lambda.tf`: the worker only gets `AGENT_RUNTIME_ARN` when AgentCore is on; every function gets
-   `JOB_TIMEOUT_MINUTES`; the queue trigger takes **1 job per invocation** (10 with AgentCore) and has
-   **maximum concurrency 2**, leaving 8 of the 10 concurrency units for the api and cron functions.
-4. `sqs.tf` needs no edit: its visibility timeout is already 6 × the worker timeout, so it becomes
-   5,400 seconds (90 minutes).
-5. `iam.tf`: the worker gets S3 access (it now downloads uploaded files for indexing), and the
-   AgentCore policy only when AgentCore is on. The AgentCore role is kept, so switching on needs no
-   IAM change.
-6. `ecr.tf` and `outputs.tf`: the AgentCore repository is kept; `agent_runtime_arn` is empty while
-   AgentCore is off.
-
-### 17.7 Change Docker, the scripts and CI
-1. `Dockerfile`: no change needed. It already installs every dependency, so the worker can run the
-   agent from the same image.
-2. `Dockerfile.agentcore`: kept, and only built when AgentCore is on.
-3. `scripts/deploy.sh` and `deploy.ps1`: read `ENABLE_AGENTCORE` (default `false`; PowerShell also
-   has `-EnableAgentCore`), pass it to Terraform, and build the ARM64 AgentCore image only when it's
-   `true`. Deploys are faster without it.
-4. `deploy.yml`: reads the GitHub variable `ENABLE_AGENTCORE` and skips the QEMU (ARM64 build) step
-   when it's off.
-
-### 17.8 Check the changes before deploying
-1. `terraform validate` and `terraform fmt -check` in a scratch copy.
-2. A read-only `terraform plan` for dev against the real state. Ours showed the three Lambdas being
-   created, the queue trigger with batch size 1 and maximum concurrency 2, the visibility timeout
-   going from 360 to 5,400 seconds, and no AgentCore runtime.
-3. Syntax checks: `bash -n` for the bash script, the PowerShell parser for the PowerShell script,
-   and `actionlint` for the workflows.
-
-### 17.9 Deploy and switch back later
-1. Push to `dev` (or run **Actions → Deploy → `dev`**). The deploy now creates the Lambdas.
-2. Fill the `juniper-hollow-dev/app` secret, then test the website.
-3. When AWS raises the AgentCore quota (the probe script creates its test runtime), add the GitHub
-   variable `ENABLE_AGENTCORE = true` and deploy again. No code change is needed.
