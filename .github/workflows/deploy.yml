@@ -5,9 +5,6 @@
 #   - Environments "dev" and "prod"; on prod, add yourself as a required reviewer and allow only main.
 # The deploy role trusts only these two environments (OIDC subject ...:environment:dev|prod), so no
 # AWS keys are stored in GitHub.
-# Agent jobs run in the worker Lambda. To run them on Bedrock AgentCore instead (needs an AgentCore
-# quota above 0), add the variable ENABLE_AGENTCORE = true under Settings -> Secrets and variables
-# -> Actions -> Variables, on the repository or on one environment.
 name: Deploy
 
 run-name: Deploy ${{ inputs.environment || (github.ref_name == 'main' && 'prod' || 'dev') }}
@@ -45,17 +42,9 @@ jobs:
     env:
       ENVIRONMENT: ${{ inputs.environment || (github.ref_name == 'main' && 'prod' || 'dev') }}
       DEFAULT_AWS_REGION: ${{ secrets.DEFAULT_AWS_REGION }}
-      ENABLE_AGENTCORE: ${{ vars.ENABLE_AGENTCORE == 'true' && 'true' || 'false' }}
     steps:
       - name: Check out
         uses: actions/checkout@v7
-
-      # The AgentCore image is linux/arm64; QEMU lets this x86 runner build it.
-      - name: Set up QEMU
-        if: env.ENABLE_AGENTCORE == 'true'
-        uses: docker/setup-qemu-action@v4
-        with:
-          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
