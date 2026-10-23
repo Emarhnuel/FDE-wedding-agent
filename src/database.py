@@ -130,7 +130,6 @@ CREATE TABLE IF NOT EXISTS jobs (
     status TEXT NOT NULL DEFAULT 'queued',
     dedupe_key TEXT UNIQUE NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
-    runtime_session_id TEXT,
     last_error TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
