@@ -1,19 +1,16 @@
-"""AgentCore Runtime entrypoint: runs queued jobs on the Deep Agents supervisor and records HITL pauses.
+"""Job runner: runs queued jobs on the Deep Agents supervisor and records HITL pauses.
 
-The worker invokes this runtime with {"job_id": ...}. The runtime acknowledges immediately and runs
-the job in a tracked background task. When the supervisor pauses at an `interrupt_on` tool, each
-paused action is stored in `agent_reviews` for staff (see api.py); a later `resume` job continues
-the same thread with the stored decisions. Paused state lives in the Postgres checkpointer, so a
-resume can arrive days later in a new runtime session.
+The worker Lambda (worker.py) calls run_job for each job; locally, api.py runs it in a thread. When
+the supervisor pauses at an `interrupt_on` tool, each paused action is stored in `agent_reviews` for
+staff (see api.py); a later `resume` job continues the same thread with the stored decisions. Paused
+state lives in the Postgres checkpointer, so a resume can arrive days later in a new invocation.
 """
 
 import os
 import threading
 from dataclasses import replace
 from datetime import UTC, datetime
-from uuid import UUID
 
-from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.store.postgres import PostgresStore
 from langgraph.types import Command
@@ -26,9 +23,6 @@ from .schemas import AgentContext
 from .tools.retention_tools import check_couple_eligibility, get_couple_record
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
-
-app = BedrockAgentCoreApp()
-
 
 _agent = None
 _agent_lock = threading.Lock()
@@ -204,7 +198,7 @@ def run_job(job_id: str) -> str:
         "jobs",
         {"status": "running", "attempts": job["attempts"] + 1, "updated_at": datetime.now(UTC).isoformat()},
         id=f"eq.{job_id}",
-        status="in.(queued,dispatched)",
+        status="eq.queued",
     ):
         return "already_claimed"
 
@@ -234,31 +228,3 @@ def run_job(job_id: str) -> str:
     except Exception as exc:
         set_job_status(job_id, "failed", last_error=f"{type(exc).__name__}: {exc}"[:1000])
         raise
-
-
-def _run_tracked(job_id: str, task_id: int) -> None:
-    try:
-        run_job(job_id)
-    finally:
-        # Ends HEALTHY_BUSY so AgentCore can idle out the session.
-        app.complete_async_task(task_id)
-
-
-@app.entrypoint
-def invoke(payload: dict) -> dict:
-    """Acknowledge the job at once and run it in a tracked background task."""
-    # Payloads arrive as parsed JSON of any shape; accept only {"job_id": "<uuid string>"}.
-    raw_id = payload.get("job_id") if isinstance(payload, dict) else None
-    try:
-        job_id = str(UUID(raw_id)) if isinstance(raw_id, str) else ""
-    except ValueError:
-        job_id = ""
-    if not job_id:
-        return {"status": "rejected", "error": "A valid job_id is required."}
-    task_id = app.add_async_task("run_job", {"job_id": job_id})
-    threading.Thread(target=_run_tracked, args=(job_id, task_id), daemon=True).start()
-    return {"status": "accepted", "job_id": job_id}
-
-
-if __name__ == "__main__":
-    app.run()
