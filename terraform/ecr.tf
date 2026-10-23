@@ -1,12 +1,9 @@
-# Image repositories, tagged with the git commit SHA (var.image_tag):
-#   lambda    - one image for the api, worker, and cron functions
-#   agentcore - the linux/arm64 image AgentCore Runtime requires, running src/runtime.py; filled only
-#               with enable_agentcore, but kept either way so switching it on needs no new repository
+# Image repository, tagged with the git commit SHA (var.image_tag):
+#   lambda - one image for the api, worker, and cron functions
 
 locals {
   ecr_repositories = {
-    lambda    = "${local.name_prefix}-lambda"
-    agentcore = "${local.name_prefix}-agentcore"
+    lambda = "${local.name_prefix}-lambda"
   }
 }
 
