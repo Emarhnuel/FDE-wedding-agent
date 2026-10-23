@@ -29,14 +29,11 @@ locals {
       "arn:aws:iam::aws:policy/AmazonS3FullAccess",
     ]
     # Reads the jobs queue (event source mapping) and runs the jobs, which includes downloading
-    # uploaded originals for indexing; with enable_agentcore it invokes the runtime instead.
-    worker = concat(
-      [
-        "arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole",
-        "arn:aws:iam::aws:policy/AmazonS3FullAccess",
-      ],
-      var.enable_agentcore ? ["arn:aws:iam::aws:policy/BedrockAgentCoreFullAccess"] : [],
-    )
+    # uploaded originals for indexing.
+    worker = [
+      "arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole",
+      "arn:aws:iam::aws:policy/AmazonS3FullAccess",
+    ]
     # Queues Gmail inquiries and retention jobs.
     cron = [
       "arn:aws:iam::aws:policy/AmazonSQSFullAccess",
@@ -65,101 +62,4 @@ resource "aws_iam_role_policy_attachment" "lambda" {
 
   role       = aws_iam_role.lambda[each.value.function].name
   policy_arn = each.value.policy
-}
-
-# -----------------------------------------------------------------------------
-# AgentCore runtime: runs agent jobs and document indexing (src/runtime.py) when enable_agentcore
-# is on. The role is kept either way, so switching AgentCore on needs no IAM changes.
-# -----------------------------------------------------------------------------
-
-# Trust policy from the AgentCore Runtime docs, limited to this account's AgentCore resources.
-data "aws_iam_policy_document" "agentcore_trust" {
-  statement {
-    actions = ["sts:AssumeRole"]
-
-    principals {
-      type        = "Service"
-      identifiers = ["bedrock-agentcore.amazonaws.com"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceAccount"
-      values   = [local.account_id]
-    }
-
-    condition {
-      test     = "ArnLike"
-      variable = "aws:SourceArn"
-      values   = ["arn:aws:bedrock-agentcore:${var.aws_region}:${local.account_id}:*"]
-    }
-  }
-}
-
-# Execution permissions the AgentCore Runtime docs list for a container agent: pull the image,
-# write logs, send traces and metrics.
-data "aws_iam_policy_document" "agentcore_runtime" {
-  statement {
-    sid       = "ECRImageAccess"
-    actions   = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"]
-    resources = [aws_ecr_repository.app["agentcore"].arn]
-  }
-
-  statement {
-    sid       = "ECRTokenAccess"
-    actions   = ["ecr:GetAuthorizationToken"]
-    resources = ["*"]
-  }
-
-  statement {
-    sid       = "Logs"
-    actions   = ["logs:DescribeLogStreams", "logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
-    resources = ["arn:aws:logs:${var.aws_region}:${local.account_id}:log-group:/aws/bedrock-agentcore/runtimes/*"]
-  }
-
-  statement {
-    sid       = "DescribeLogGroups"
-    actions   = ["logs:DescribeLogGroups"]
-    resources = ["arn:aws:logs:${var.aws_region}:${local.account_id}:log-group:*"]
-  }
-
-  statement {
-    sid       = "XRay"
-    actions   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords", "xray:GetSamplingRules", "xray:GetSamplingTargets"]
-    resources = ["*"]
-  }
-
-  statement {
-    sid       = "Metrics"
-    actions   = ["cloudwatch:PutMetricData"]
-    resources = ["*"]
-
-    condition {
-      test     = "StringEquals"
-      variable = "cloudwatch:namespace"
-      values   = ["bedrock-agentcore"]
-    }
-  }
-}
-
-resource "aws_iam_role" "agentcore" {
-  name               = "${local.name_prefix}-agentcore-runtime"
-  assume_role_policy = data.aws_iam_policy_document.agentcore_trust.json
-}
-
-resource "aws_iam_role_policy" "agentcore_runtime" {
-  name   = "agentcore-runtime"
-  role   = aws_iam_role.agentcore.id
-  policy = data.aws_iam_policy_document.agentcore_runtime.json
-}
-
-# The runtime also reads the app secret and downloads uploaded originals for indexing.
-resource "aws_iam_role_policy_attachment" "agentcore" {
-  for_each = toset([
-    "arn:aws:iam::aws:policy/SecretsManagerReadWrite",
-    "arn:aws:iam::aws:policy/AmazonS3FullAccess",
-  ])
-
-  role       = aws_iam_role.agentcore.name
-  policy_arn = each.value
 }
