@@ -13,6 +13,7 @@ CLAUDE.md
 claude_help.md
 .agents/
 images/
+evaluation-results.md
 .claude/worktrees/
 # Terraform working files (state can hold secrets; lock file is kept)
 *.tfstate
