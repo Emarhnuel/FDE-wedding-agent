@@ -49,7 +49,7 @@ src/
 | `middleware.py` | Safety checks, conditional review policy, model/tool limits, and bounded retries. |
 | `cron.py` | Daily retention selection and scheduled maintenance, invoked by EventBridge Scheduler through Lambda; enqueue work and exit. |
 | `api.py` | Thin FastAPI web API on Lambda, adapted through a Lambda-compatible ASGI handler. Receive public forms; serve authenticated staff review and document-management requests; coordinate request, record, and job handling previously planned in `workflow.py`, including conversation-thread mapping and recording approved decisions. |
-| `worker.py` | SQS-triggered Lambda dispatcher: load durable jobs and invoke AgentCore without waiting for the entire agent run. |
+| `worker.py` | SQS-triggered Lambda: load durable jobs and run each one itself (the default, within the 15-minute Lambda timeout), or, when `AGENT_RUNTIME_ARN` is set, invoke AgentCore without waiting for the entire agent run. |
 | `runtime.py` | AgentCore entrypoint and tracked background execution; call the agent factory and persistence setup helpers in `agents.py`, manage resource connections at startup and shutdown, and do not redefine agents. |
 | `security/__init__.py` | Package marker for staff authentication and authorization modules. |
 | `security/auth.py` | Confirm staff identity by calling `GET /api/auth/sessions/current` on the fixed, trusted InsForge backend URL with the presented token, resolve the active staff membership, company, and roles in our application database, and return 401 for absent or invalid tokens; auth-service failures fail closed. |
@@ -238,7 +238,7 @@ An optional alternative to EventBridge Scheduler is [InsForge scheduling](https:
 | Document originals | Separate private, versioned S3 knowledge bucket with public access blocked; never alongside public frontend assets or at a public URL. |
 | Web API | API Gateway HTTP API with one catch-all route to a Lambda running the thin FastAPI application through Mangum; CORS restricted to the Amplify domain. |
 | Durable dispatch | SQS FIFO jobs queue with a dead-letter queue, plus a Lambda dispatcher triggered by the queue with partial batch failure reporting; persist job status and recover incomplete work. |
-| Deep Agents execution | Amazon Bedrock AgentCore Runtime, with the supervisor and subagents defined in `agents.py`, from an ARM64 container image in ECR. |
+| Deep Agents execution | The worker Lambda (15-minute timeout, at most 2 jobs at once), with the supervisor and subagents defined in `agents.py`. Amazon Bedrock AgentCore Runtime (ARM64 image in ECR) is kept as a switch (`enable_agentcore`) for when the account's AgentCore quota is raised above 0. |
 | Lambda packaging | One container image in ECR shared by the `api`, `worker`, and `cron` Lambdas, each with its own handler command; avoids the 250 MB zip limit. |
 | Gmail polling and daily retention/maintenance | Two EventBridge Scheduler schedules invoke `cron.py`: `rate(8 minutes)` for Gmail polling and `cron(0 9 * * ? *)` in `America/Chicago` for retention and maintenance, with a standard-queue dead-letter queue. |
 | Secrets | AWS Secrets Manager for the HubSpot, Gmail OAuth, InsForge, and OpenRouter credentials; never in `.tfvars`, the repository, or Lambda configuration in plain text. |
@@ -256,6 +256,12 @@ Run PostgreSQL and the application locally for early phases. A local queue consu
 Other planning documents, including `docs/project-tasks.md` and `docs/scenario-job-description.md`, are not updated by this task. Align their relevant module and authentication references with this architecture before implementation.
 
 ### Why Lambda and AgentCore Are Used Together
+
+> **Current deployment:** our new AWS account's AgentCore quotas are 0, so the agent runs in the worker
+> Lambda instead (`enable_agentcore = false`). A job runs until the first staff-review pause, which fits
+> the 15-minute Lambda limit; the paused run lives in Postgres and the staff decision resumes it as a new
+> job. Setting `ENABLE_AGENTCORE=true` switches back to AgentCore with no code change. The rest of this
+> section describes the AgentCore design.
 
 Lambda handles short work: web requests (forms, staff approvals, job-status reads) and scheduled tasks (Gmail polling, daily retention and maintenance). Standard Lambda execution is limited to 15 minutes; API Gateway HTTP APIs have a 30-second integration timeout. The API durably accepts work and returns a job ID promptly, not after the entire agent workflow completes. Other API Gateway types have different timeout rules, so the 30-second limit here applies specifically to the selected HTTP API.
 
