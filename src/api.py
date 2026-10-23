@@ -1,11 +1,12 @@
 """FastAPI web API: public inquiry intake, staff review of paused agent actions, staff administration,
 and knowledge document management.
 
-The API never runs the agent. It validates, records decisions, and queues jobs; the AgentCore
-runtime does the long work (locally, RUN_JOBS_LOCALLY=true runs queued jobs in-process instead). When the Deep Agents supervisor pauses at an `interrupt_on` tool
-(save_*_draft or send_*), the runtime stores one `agent_reviews` row per paused action. Staff
-decide here, and once every action of that interrupt is decided a `resume` job is queued so the
-runtime can resume the same thread with the stored decisions.
+The API never runs the agent. It validates, records decisions, and queues jobs; the worker Lambda
+does the long work (locally, RUN_JOBS_LOCALLY=true runs queued jobs in-process instead). When the
+Deep Agents supervisor pauses at an `interrupt_on` tool (save_*_draft or send_*), the runtime stores
+one `agent_reviews` row per paused action. Staff decide here, and once every action of that
+interrupt is decided a `resume` job is queued so the runtime can resume the same thread with the
+stored decisions.
 """
 
 import hashlib
@@ -34,7 +35,7 @@ from .security.permissions import STAFF_ADMIN, Action, authorize
 # Trusted server configuration; never taken from request payloads.
 COMPANY_ID = os.environ.get("COMPANY_ID", "juniper-hollow")
 JOBS_QUEUE_URL = os.environ.get("JOBS_QUEUE_URL", "")
-# Local development only: with no SQS queue or AgentCore, run each queued job in this process.
+# Local development only: with no SQS queue or worker, run each queued job in this process.
 RUN_JOBS_LOCALLY = os.environ.get("RUN_JOBS_LOCALLY", "").lower() == "true"
 ALLOWED_ORIGINS = [o for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000").split(",") if o]
 
