@@ -3,6 +3,9 @@
 #
 #   bash scripts/deploy.sh dev        (or prod)
 #
+# Agent jobs run in the worker Lambda. ENABLE_AGENTCORE=true runs them on Bedrock AgentCore Runtime
+# instead (needs an AgentCore quota above 0) and also builds the linux/arm64 AgentCore image.
+#
 # Needs: aws CLI (logged in), terraform >= 1.10, docker with buildx, python3, curl, git.
 # The same script runs locally and in GitHub Actions (.github/workflows/deploy.yml).
 set -euo pipefail
@@ -17,6 +20,11 @@ PROJECT_NAME="${PROJECT_NAME:-juniper-hollow}" # must match project_name in terr
 AWS_REGION="${DEFAULT_AWS_REGION:-us-east-1}"
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 NAME_PREFIX="${PROJECT_NAME}-${ENVIRONMENT}"
+ENABLE_AGENTCORE="${ENABLE_AGENTCORE:-false}"
+if [[ "$ENABLE_AGENTCORE" != "true" && "$ENABLE_AGENTCORE" != "false" ]]; then
+  echo "ENABLE_AGENTCORE must be true or false" >&2
+  exit 1
+fi
 
 for tool in aws terraform docker python3 curl git; do
   command -v "$tool" >/dev/null || { echo "Missing required tool: $tool" >&2; exit 1; }
@@ -33,9 +41,9 @@ if [[ -z "${GITHUB_SHA:-}" && -n "$(git -C "$ROOT_DIR" status --porcelain)" ]]; 
   IMAGE_TAG="${IMAGE_TAG}-local-$(date +%Y%m%d%H%M%S)"
 fi
 
-echo "==> Deploying ${NAME_PREFIX} to account ${AWS_ACCOUNT_ID} (${AWS_REGION}), image tag ${IMAGE_TAG}"
+echo "==> Deploying ${NAME_PREFIX} to account ${AWS_ACCOUNT_ID} (${AWS_REGION}), image tag ${IMAGE_TAG}, AgentCore ${ENABLE_AGENTCORE}"
 
-TF_VARS=(-var "image_tag=${IMAGE_TAG}")
+TF_VARS=(-var "image_tag=${IMAGE_TAG}" -var "enable_agentcore=${ENABLE_AGENTCORE}")
 if [[ "$ENVIRONMENT" == "prod" ]]; then
   TF_VARS+=(-var-file=prod.tfvars)
 fi
@@ -53,7 +61,7 @@ echo "==> Creating the ECR repositories"
 terraform apply -input=false -auto-approve "${TF_VARS[@]}" \
   -target=aws_ecr_repository.app -target=aws_ecr_lifecycle_policy.app
 
-# 2. Build and push both images (skipped if this tag is already in ECR).
+# 2. Build and push the images (each skipped if this tag is already in ECR).
 echo "==> Logging in to ECR"
 aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$REGISTRY"
 
@@ -70,9 +78,11 @@ build_and_push() { # <repository name> <platform> <dockerfile>
     -f "$ROOT_DIR/$dockerfile" -t "${REGISTRY}/${repository}:${IMAGE_TAG}" --push "$ROOT_DIR"
 }
 build_and_push "${NAME_PREFIX}-lambda" linux/amd64 Dockerfile
-build_and_push "${NAME_PREFIX}-agentcore" linux/arm64 Dockerfile.agentcore
+if [[ "$ENABLE_AGENTCORE" == "true" ]]; then
+  build_and_push "${NAME_PREFIX}-agentcore" linux/arm64 Dockerfile.agentcore
+fi
 
-# 3. Everything else: queue, secret, functions, AgentCore runtime, API, schedules, website app.
+# 3. Everything else: queue, secret, functions, API, schedules, website app (and AgentCore if enabled).
 echo "==> Terraform apply"
 terraform apply -input=false -auto-approve "${TF_VARS[@]}"
 
