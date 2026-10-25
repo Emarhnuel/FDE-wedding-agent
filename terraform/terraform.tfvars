@@ -6,7 +6,7 @@ project_name = "juniper-hollow"
 
 company_id        = "juniper-hollow"
 venue_timezone    = "America/Chicago"
-auto_send_routine = false
+auto_send_routine = true
 langsmith_project = "juniper-hollow-agent"
 
 # Lets a local website (python -m http.server 3000) call the dev API.
