@@ -4,8 +4,10 @@ Every step we took to build the Juniper Hollow agent, from an empty folder to th
 It is written in order, so it can be followed as the script for the video. It describes what each
 file does instead of showing its code.
 
-It covers the build, the first AWS deploy (Part 14), and the **LangSmith evaluation** of the agent
-(Part 15).
+It covers the build, the first AWS deploy (Part 14), the **LangSmith evaluation** of the agent
+(Part 15), testing dev with real emails and fixing what that found (Parts 16 and 17), turning on
+auto-send (Part 18), going to production (Part 19), running it day to day (Part 20), and tearing it
+down (Part 21).
 
 ---
 
@@ -35,7 +37,7 @@ Secrets Manager, ECR, Amplify), all deployed with Terraform and GitHub Actions.
 4. Install a code editor (we use VS Code with Claude Code).
 5. Create a **GitHub** account if you don't have one.
 
-Terraform, the AWS CLI and Docker are installed later, in Part 9.
+Terraform, the AWS CLI and Docker are installed later, in Part 11.
 
 ---
 
@@ -150,7 +152,8 @@ Gmail calls start failing with `invalid_grant`:
    it in **AWS Secrets Manager** instead.
 
 The Client ID, Client secret and sender stay the same; only the refresh token changes. To stop the
-7-day expiry for good, publish the app: **Google Auth Platform → Audience → Publish app**.
+7-day expiry for good, publish the app: **Google Auth Platform → Audience → Publish app**. Part
+19.1 covers the steps that go with it.
 
 **Gmail troubleshooting**
 
@@ -174,8 +177,9 @@ The Client ID, Client secret and sender stay the same; only the refresh token ch
 1. Create the project folder and open it in your editor.
 2. Run `git init`.
 3. Create a **`.gitignore`** first, before any secret exists. It ignores `.env`, `.venv`, caches,
-   local data folders, editor and Claude Code settings, the `docs/` and `images/` folders, and
-   (added later) Terraform state, plans and `.terraform/` folders.
+   local data folders, editor and Claude Code settings, the `images/` folder, the private planning
+   file `docs/project-tasks.md`, and (added later) Terraform state, plans and `.terraform/` folders.
+   The rest of `docs/` is committed.
 4. Create **`pyproject.toml`** with the project name, Python 3.12+, and pinned versions of the
    dependencies: Deep Agents, LangChain, the OpenRouter and OpenAI LangChain packages, the text
    splitter, pypdf, pydantic, LangSmith, httpx and python-dotenv. A `dev` group holds pytest. More
@@ -220,7 +224,8 @@ The keys:
 ## Part 6. Build the backend (`src/`), file by file
 
 This is the order we built the files in. After most steps we ran a quick check or a live test.
-There are **no mocks**: every test talks to the real services and cleans up after itself.
+The tests talk to the real services and clean up after themselves. The only stand-in is in
+`test_security.py`, which uses pytest's `monkeypatch` to simulate InsForge failures.
 
 ### 6.1 `config.py`: settings
 Reads `.env` and holds the shared settings: the company ID, venue timezone, the switches, and the
@@ -250,6 +255,8 @@ subagent's structured result.
 XML-structured prompts for the supervisor and the three subagents, with shared blocks: the safety
 rules, when staff must decide, and the writing style (120–180 words, no filler, no dashes, plain
 text). The supervisor's final answer is at most three lines.
+Added later, after live testing (Part 17.2): rules that stop the agents treating details the
+customer never asked about as gaps.
 
 ### 6.5 `models.py`: the chat models
 Four `ChatOpenRouter` models with reasoning switched on, streaming off, and output-token caps.
@@ -275,7 +282,8 @@ job.
   consent, an active cooldown, an outdated source, or a needed review without staff approval.
 - **Tool error handling:** turns tool errors into messages the model can read and fix.
 - Added later: **PII redaction** (card, bank and ID numbers are removed before any model sees them,
-  and LangSmith traces are masked) and **OpenRouter prompt caching**.
+  and LangSmith traces are masked), **OpenRouter prompt caching**, and, after live testing, a
+  **tool budget** that hides a subagent's tool once its limit is used up (Part 17.1).
 
 ### 6.7 `database.py`: the data layer
 No ORM or database driver: everything goes over HTTP to InsForge (raw SQL and record CRUD). It holds
@@ -311,7 +319,8 @@ Builds the **supervisor** with `create_deep_agent` and three subagents:
 - `retention_agent`: reads couple history and saves retention drafts.
 
 Subagents can only **draft**. Only the supervisor holds the send tools. Each agent gets call limits,
-retries and error handling. Memory under `/memories/` is stored per company and contact; everything
+retries and error handling; each subagent can call its model at most 10 times per task (added in
+Part 17.1). Memory under `/memories/` is stored per company and contact; everything
 else is per conversation. Each subagent returns a structured result.
 **Check:** building the graph (`import src.agents`) must succeed.
 
@@ -360,7 +369,8 @@ first staff-review pause), and reports only failed messages back to SQS so they 
 
 ### 6.17 `cron.py`: the scheduled jobs
 - **Every 8 minutes:** polls Gmail for new customer emails and queues each one as a job. Replies
-  stay in the same Gmail thread.
+  stay in the same Gmail thread. Added later (Part 17.3): the quoted earlier message under a reply
+  is cut off before the job is queued.
 - **Every day:** queues retention jobs for couples with an anniversary coming up, marks jobs cut
   off by the worker's timeout as failed, and deletes conversation data older than **120 days** (drafts and audit logs are kept).
 
@@ -596,14 +606,16 @@ New AWS accounts start with some quotas lower than the AWS defaults.
 2. Merging `dev` into `main` deploys prod once you approve the run in GitHub Actions. Fill
    **`juniper-hollow-prod/app`** the same way only when you're ready to switch: dev and prod with the
    same Gmail and InsForge keys would both poll the same inbox every 8 minutes. Until it is filled,
-   prod's cron fails every 8 minutes, which only adds error logs in CloudWatch.
+   prod's cron fails every 8 minutes, which only adds error logs in CloudWatch. Part 19 walks
+   through going to prod.
 
 ---
 
 ## Part 15. Evaluate the agent with LangSmith
 
 Next we measure how well the agent behaves. The architecture doc requires a
-LangSmith evaluation, and `AUTO_SEND_ROUTINE` stays off until routine replies pass it. Everything in
+LangSmith evaluation, and `AUTO_SEND_ROUTINE` stays off in prod until routine replies pass it (dev
+turns it on for testing, Part 18). Everything in
 this part runs on your own computer; it doesn't need the AWS deploy.
 
 ### 15.1 Research the LangSmith docs
@@ -715,3 +727,280 @@ A full run costs model tokens and takes close to an hour, so test small first:
 2. Set the first experiment as the **baseline** in LangSmith, make the fixes, re-run, and compare the
    new experiment against it.
 3. Turn on `AUTO_SEND_ROUTINE` only when routine replies pass reliably.
+
+---
+
+## Part 16. Test dev end to end with real emails
+
+The evaluation runs on your computer. Now we test the deployed dev environment the way a customer and
+a staff member would use it. Each test costs a few cents of model tokens and sends real email.
+
+### 16.1 A website inquiry
+1. Open the dev website and send a message from **Contact Us**. Ask one or two routine questions
+   whose answers are in the knowledge pack, for example Wi-Fi and wheelchair access at the barn.
+   Avoid prices, dates and booking words for this first test.
+2. The API saves the inquiry and queues a job straight away. The job's conversation ID is
+   `inquiry:<id>`; we use it to find the run in LangSmith.
+3. The worker Lambda picks up the job within seconds. A healthy run takes about 1 to 3 minutes.
+4. Then one of two things happens:
+   - **Auto-send** (dev has `AUTO_SEND_ROUTINE` on): the reply arrives in the customer's inbox.
+   - **Staff review:** the email appears under **Pending reviews** in the staff portal. Open it, read
+     the review reasons, and approve, edit or reject it. Approving sends it.
+5. Open the customer in **HubSpot → CRM → Contacts → Activity**. You should see the customer's
+   message as an incoming email and our reply as an outgoing one.
+
+### 16.2 An email inquiry
+1. From a different email account, send a question to the venue's Gmail address (`GMAIL_SENDER`).
+2. Wait up to **8 minutes** for the cron Lambda's next Gmail poll. It queues the email as a job with
+   the conversation ID `gmail:<Gmail thread ID>`.
+3. The reply is sent in the same Gmail thread, so the customer sees one conversation.
+4. Reply to our answer from the customer's account. The next poll picks it up as a new job in the
+   **same** conversation, and the agent reads the customer's history, including our earlier drafts.
+5. Only one job per conversation runs at a time. If a job in that conversation is still running, the
+   new one waits in the queue until it finishes.
+
+### 16.3 Follow a run in LangSmith
+1. Open **LangSmith → Tracing projects → `juniper-hollow-agent`**.
+2. Filter by the conversation ID (`inquiry:<id>` or `gmail:<id>`) to see every run in it.
+3. Open the run and read it from the top:
+   - the supervisor's `task` calls, one per subagent, with the instructions it wrote for them;
+   - `search_company_knowledge` calls and what they returned;
+   - `save_inquiry_draft`, whose inputs show the draft, `requires_review` and the `review_reasons`;
+   - `send_customer_email`, or the pause for staff review.
+4. The top-level run often stays **pending** even after the job has finished. The Lambda is frozen
+   before the last trace data is uploaded. Look at the steps inside the run; they are complete.
+5. We also read traces from Claude Code with the **LangSmith MCP**: give it the conversation ID and
+   ask it to explain the run.
+
+### 16.4 Why did a reply go to staff review?
+No single agent decides. It is a chain of two checks:
+1. **The inquiry agent** (Mistral Large) sets `requires_review` when it saves the draft, and writes
+   its `review_reasons`. This is the model's own judgement: it flags anything restricted, anything
+   the evidence doesn't answer, or anything it is unsure about. `save_inquiry_draft` then forces it
+   on if the sensitive-topic pattern matches.
+2. **The send gate** (`should_interrupt_delivery`, plain code on the supervisor, no model) pauses the
+   send when `AUTO_SEND_ROUTINE` is off, the draft has no sources, it is marked for review, or the
+   sensitive-topic pattern matches the customer's message or the reply.
+
+So when a reply goes to review, open `save_inquiry_draft` in the trace and read `review_reasons`.
+If they are empty, the sensitive-topic pattern caught a word. It treats any year (`2026`) or month
+and day (`Oct 28`) as a date request, and words such as price, quote, booking, deposit or refund as
+restricted.
+
+### 16.5 Problems we hit, and the fix for each
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Sending fails with `400 Bad Request` from `oauth2.googleapis.com/token` | The Gmail refresh token expired (7 days in Testing mode) | Renew it (Part 3.4) and update `GMAIL_REFRESH_TOKEN` in `.env` and in the app secret |
+| Every model call fails with `401 "User not found"` | The OpenRouter key was disabled | Re-enable the key, or create a new one and update the app secret |
+| A new secret value isn't used | Warm Lambdas keep the values they loaded at start | Wait about 15 minutes for them to be replaced, or redeploy |
+| The job runs for 15 minutes and nothing arrives, not even a review | A subagent was stuck in a loop until the Lambda was cut off | Fixed in Part 17.1 |
+| Routine questions go to review with reasons the customer never asked about | The agents invented "gaps" | Fixed in Part 17.2 |
+| Every Gmail reply goes to review, whatever it says | The quoted earlier message (with its date) reached the agent | Fixed in Part 17.3 |
+| Promotional or system emails are treated as inquiries | The poller skips bulk mail by its headers, but not all of it | Known limit (Part 20.3) |
+| The job ends as `failed` and no one is told | Failed jobs don't alert staff yet | Known limit (Part 20.3) |
+
+---
+
+## Part 17. Fix what live testing found
+
+Each fix follows the same loop: find the run in LangSmith, read the steps, find the cause in the
+code or the prompt, make the smallest change, push to `dev`, and send the same test again.
+
+### 17.1 A subagent stuck in a loop
+**What we saw:** an inquiry got no reply and no review. In LangSmith, the knowledge retriever had
+called the model about 60 times, about every 10 seconds, until the Lambda was cut off at 15 minutes.
+Each answer came back with "Tool call limit exceeded".
+
+**The cause:**
+1. Each subagent returns a structured result. To get it, LangChain forces the model to call a tool
+   on every turn.
+2. The retriever hit its limit of 6 searches. The limit blocked further searches but let the model
+   carry on.
+3. The model wrote its answer as plain text and still asked for one more search, which is a tool
+   call. That was blocked, and it repeated. Nothing limited the subagent's number of model calls.
+
+**Why not simply end the subagent at the limit:** LangChain's "end" option replaces the subagent's
+last message with a "limit exceeded" notice, so the supervisor would lose the evidence it had found.
+We checked this in the library's source code.
+
+**The fix, in `middleware.py` and `agents.py`:**
+1. A new **tool budget** middleware: once a tool's limit is used up, the tool is removed from the
+   list the model sees. The only tool left is the structured answer, so the subagent returns its
+   result. All three subagents use it (6 searches, 3 inquiry saves, 2 retention saves).
+2. A **model-call limit of 10** on each subagent. A healthy run uses about 5, so a stuck subagent
+   now stops in about a minute instead of using the whole 15.
+
+After the fix, the same three questions took about 30 seconds per subagent.
+
+### 17.2 Routine questions sent to review for invented gaps
+**What we saw:** "Is the barn wheelchair accessible?" went to review because "restroom accessibility
+is not documented". The customer never asked about restrooms.
+
+**The cause,** found by reading each agent's input in the trace:
+1. The **supervisor** (Gemini) wrote the retriever's task as "accessibility (ramps, restrooms,
+   ceremony and reception areas)", adding topics the customer didn't ask about.
+2. The **retriever** searched for them, found nothing, and reported them as missing.
+3. The **inquiry agent** was told to flag every gap, so it marked the draft for review.
+
+**The fix, in `prompts.py` only:**
+1. **Supervisor:** pass the customer's questions as they wrote them, without adding questions or
+   sub-topics, and pass the evidence on without notes about details nobody asked about.
+2. **Knowledge retriever:** a question is answered when the evidence answers it; don't search for or
+   report unasked details as missing; a general venue rule (such as dogs being welcome outdoors with
+   a handler) applies to every guest unless the source limits it.
+3. **Inquiry agent:** a gap is a question the customer asked that the evidence leaves unanswered;
+   details they didn't ask about are not gaps or review reasons.
+
+The safety rules didn't change. Anything restricted, or a question the knowledge really doesn't
+answer, still goes to staff.
+
+**The result:** the same Wi-Fi and wheelchair questions, sent again from the website form, were
+saved with `requires_review=False` and sent to the customer automatically, about 1.5 minutes after
+the inquiry arrived.
+
+### 17.3 Gmail replies always held for review
+**What we saw:** every customer reply in a Gmail thread went to review.
+
+**The cause:** Gmail puts the earlier message under every reply, starting with a line like
+"On Wed, Oct 28, 2026 at 9:18 PM … wrote:". The poller passed the whole email to the agent, so:
+- the sensitive-topic pattern saw `2026` and `Oct 28` and treated them as a date request;
+- the agent read our own earlier reply as part of the customer's message;
+- every reply in the thread resent the whole conversation, using more tokens each time.
+
+**The fix, in `cron.py`:** before queuing an email, the poller cuts it at the "On … wrote:" line (or
+Outlook's "Original Message" line) and drops lines starting with `>`. If nothing new would be left,
+it keeps the whole text. The earlier messages aren't lost; they are already on the customer's HubSpot
+timeline, and the agent still reads our earlier drafts.
+
+We checked it on our real email, on a Gmail header split over two lines, an Outlook reply, inline
+answers, a quote-only email, and a normal message that happens to start with "On Saturday…".
+
+### 17.4 Retest
+1. Push the fixes to `dev` and wait for the **Deploy dev** run to finish.
+2. Repeat Part 16.1 with the same questions that failed. Make the message match itself: if it says
+   "two questions", list two. A mismatch is a fair reason for review.
+3. Repeat Part 16.2 and reply in the thread without deleting the quoted text.
+4. Re-run the evaluation (Part 15.7) and compare the new experiment with the baseline in LangSmith.
+   A fix that helps one inquiry must not lower the other scores.
+
+---
+
+## Part 18. Turn on auto-send for routine replies
+
+1. `AUTO_SEND_ROUTINE` is a Terraform setting, `auto_send_routine`, that becomes a Lambda setting.
+   Its default is **off**.
+2. Know which file sets it for which environment:
+   - `terraform/terraform.tfvars` is loaded for **both** dev and prod;
+   - `terraform/prod.tfvars` is added on top for prod, and only changes what it sets.
+3. **Dev:** we set `auto_send_routine = true` in `terraform.tfvars` to test auto-send.
+4. **Prod:** because `terraform.tfvars` now turns it on, prod would auto-send too. Keep prod off by
+   setting `auto_send_routine = false` in `prod.tfvars`, and change it to `true` only when the
+   evaluation and the live tests show routine replies are right every time.
+5. Even with it on, these always go to staff: anything the sensitive-topic pattern catches, drafts
+   without sources, drafts the inquiry agent marks for review, and every retention email.
+6. Pushing the change deploys it. No code changes are needed.
+
+---
+
+## Part 19. Go to production
+
+Work through this list in order. Prod is deployed from `main` and needs your approval in GitHub
+Actions every time.
+
+### 19.1 Before the first prod deploy
+1. **Gmail:** stop the 7-day token expiry.
+   1. Publish the Google app: **Google Auth Platform → Audience → Publish app**. Its status changes
+      from **Testing** to **In production**.
+   2. Get a fresh refresh token once (Part 3.4, Step 5) and put it in the app secret. Google's docs
+      only say that apps in Testing get 7-day tokens. They don't say whether a token made before
+      publishing keeps that limit, so make a new one to be safe.
+   3. At sign-in, Google shows its **unverified app** screen, because reading Gmail is a restricted
+      permission and the app isn't verified. Click **Continue** as in Part 3.4. Unverified apps are
+      limited to 100 users, which is fine here: only the venue's own Gmail account signs in.
+   4. A week later, check that Gmail polling and sending still work.
+2. **InsForge:** turn **Disable New User Signups** on (Part 3.2).
+3. **Decide how dev and prod share services.** Both environments would otherwise poll the same Gmail
+   inbox every 8 minutes and use the same database, so both would answer the same customers. Choose
+   one:
+   - **Separate services (best):** a second InsForge project and a second Gmail account for dev.
+     Put dev's new keys in `juniper-hollow-dev/app`, and run the one-time setup (Part 7) against the
+     new InsForge project.
+   - **Simplest:** destroy dev (Part 21) before switching prod on, and bring it back when you need it.
+4. Check the evaluation and the live tests are passing on dev.
+
+### 19.2 Deploy prod
+1. Merge `dev` into `main` and push `main`.
+2. Open **GitHub → Actions**. The **Deploy prod** run waits for approval. Click **Review deployments**,
+   tick **prod**, and approve.
+3. When it finishes, the end of the **Deploy** step's log prints the prod website and API addresses,
+   as in Part 14.
+4. The log warns that the prod secret is empty. Fill **`juniper-hollow-prod/app`** exactly as in
+   Part 14.1.
+5. **InsForge:** add the prod website's `/sign-in` and `/reset-password` addresses to the allowed
+   redirect URLs (Part 3.2), so staff login and password reset work from prod.
+
+### 19.3 Check prod
+1. Repeat Part 16.1 and Part 16.2 on prod with your own test addresses.
+2. Sign in to the prod portal as the staff admin and add the real staff, each with only the roles
+   they need.
+3. Check **CloudWatch → Log groups** for the three prod Lambdas: no repeating errors.
+4. Check LangSmith shows the prod runs.
+5. Set or check the **AWS budget alert** (Part 11.1) and your OpenRouter credit.
+
+---
+
+## Part 20. Run it day to day
+
+### 20.1 Regular tasks
+- **Staff:** check **Pending reviews** a few times a day; approve, edit or reject.
+- **Knowledge:** when a policy changes, a knowledge manager uploads the new file in the portal, waits
+  for **Ready to publish**, then publishes it. The agent uses the new version straight away. If it's
+  wrong, **roll back**.
+- **Staff accounts:** the staff admin adds people and deactivates those who leave. A deactivated
+  account is locked out at once.
+- **Data:** the daily job deletes conversation data older than 120 days. Drafts and audit logs are
+  kept.
+
+### 20.2 What to watch
+1. **Failed jobs:** jobs that end as `failed` need a staff member to answer the customer by hand.
+   The daily job also marks any job still "running" more than an hour after the Lambda limit as
+   failed.
+2. **The dead-letter queue** (`jobs_dead_letter_queue_url` in the Terraform outputs): messages SQS couldn't deliver
+   after 10 tries. Inspect them and redrive by hand from the SQS console.
+3. **Costs:** OpenRouter usage, and the AWS bill against the budget.
+4. **Keys:** if the Gmail token or the OpenRouter key stops working, every job fails. Fix it as in
+   Part 16.5.
+
+### 20.3 Known limits and next steps
+- **No alert on failure:** a failed job or a failed send doesn't notify staff yet. An email or
+  portal alert is the next thing to build.
+- **Pending root traces:** the worker should flush LangSmith before it returns, so the top-level run
+  is marked complete.
+- **Gmail filtering:** promotional and system emails can still become inquiries. Filter them before
+  queuing.
+- **Slow start:** the worker's first start after a quiet period takes more than 10 seconds because of
+  heavy imports. It still works; jobs just start a little later.
+- **Lambda concurrency:** new AWS accounts get 10 concurrent Lambdas in total, so the worker runs at
+  most 2 jobs at once. Ask AWS for more in **Service Quotas** before real traffic grows.
+
+---
+
+## Part 21. Tear it down
+
+1. Open **GitHub → Actions → Destroy → Run workflow**.
+2. Pick the environment, type its name again in **confirm**, and run it. Prod needs your approval,
+   like a deploy.
+3. It removes that environment's Lambdas, API, queues, schedules, website, image repository,
+   knowledge bucket and app secret.
+   - **Dev** is removed completely, even with files and images left in it. Its secret is deleted at
+     once.
+   - **Prod** is protected: the destroy stops with an error while the knowledge bucket still has
+     files or the image repository still has images, so nothing is lost by mistake. Its secret can be
+     restored for 30 days after deletion.
+4. From your own computer, `scripts/destroy.sh` or `scripts/destroy.ps1` does the same.
+5. The destroy never touches the **bootstrap**: the Terraform state bucket and the GitHub deploy role
+   stay. They cost almost nothing, and the state bucket is protected from deletion. Leave them unless
+   you are finished with the project for good.
+6. Outside AWS, nothing is deleted: the InsForge project, HubSpot contacts, Gmail messages, LangSmith
+   traces and the OpenRouter key stay until you remove them yourself.
