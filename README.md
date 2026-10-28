@@ -36,7 +36,7 @@ This is a **Forward Deployed AI Engineering** course project. We take a vague Up
 | 🧠 | **Agentic RAG** | The agent decides *when* to search the knowledge base. Only the **published** version of a document is searchable |
 | ✋ | **Human-in-the-loop** | Pricing, date holds, bookings, contracts, refunds and complaints always pause for staff |
 | 💌 | **Retention agent** | Drafts anniversary and referral notes to past couples, only with consent and never within a 90-day cooldown |
-| 🗂️ | **CRM sync** | Every customer lands in HubSpot, and every sent email is logged there as a note |
+| 🗂️ | **CRM sync** | Every customer lands in HubSpot, and their messages and our replies show up on the contact's timeline as emails |
 | 🔐 | **Staff roles** | Email approvers, knowledge managers and staff admins, each allowed to do only their own job |
 | 📚 | **Knowledge versions** | Upload a new venue pack, publish it, and roll back in one click if it was wrong |
 | 🕵️ | **Observability** | Every run is traced in LangSmith, with emails, phone numbers and card numbers masked |
@@ -59,14 +59,14 @@ flowchart LR
     I -->|yes| J[👩‍💼 Staff portal:<br/>approve / edit / reject]
     I -->|routine + safe| K[📤 Gmail send]
     J -->|approved| K
-    K --> L[🗂️ HubSpot note]
+    K --> L[🗂️ HubSpot email log]
 ```
 
 1. **Gmail is checked every 8 minutes.** New customer emails become jobs. The website form does the same.
 2. **The supervisor hands out the work.** Three subagents research, draft inquiry replies, and draft retention notes. Subagents can only *draft*; only the supervisor can send.
 3. **Every draft is saved first**, with the sources it used and whether it needs review.
 4. **Staff decide.** The run pauses at the send step until a staff member approves, edits, or rejects it. Paused runs are stored in Postgres, so they still wait days later.
-5. **Gmail sends it**, in the same thread, and HubSpot gets a note.
+5. **Gmail sends it**, in the same thread. HubSpot shows the whole conversation on the customer's contact: each customer message as an incoming email and each reply as an outgoing one.
 6. **Every day**, the cron finds couples with a wedding anniversary coming up, and deletes conversation data older than 120 days (drafts and audit logs stay).
 
 ---
