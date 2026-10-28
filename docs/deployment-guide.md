@@ -277,6 +277,16 @@ Creates or updates the customer as a HubSpot **Contact**, reads their history, a
 drafts. Saving forces `requires_review` on when the policy says so, even if the model said no, and
 rejects drafts containing em or en dashes.
 
+It also logs emails on the contact's HubSpot **Activity timeline** (`POST /crm/v3/objects/emails`,
+linked to the contact with HubSpot's association type 198):
+- the customer's message as an **incoming** email, once per inquiry, before the agent runs (website
+  form fields such as venue and guest count are added under the message);
+- every reply we send as an **outgoing** email (from `supervisor_tools.py`).
+
+We confirmed with one test call that the private app's token can create these activities. Reading them
+back through the API would need the extra `sales-email-read` scope, which the app doesn't need.
+Staff see the conversation in HubSpot under **CRM → Contacts → the customer → Activity**.
+
 ### 6.9 `tools/retention_tools.py`: past couples
 Checks if a couple may be contacted: no consent, do-not-contact, an open complaint, a 90-day
 cooldown, or an existing pending draft all block it. Reads couple history and saves retention
@@ -296,9 +306,9 @@ else is per conversation. Each subagent returns a structured result.
 
 ### 6.11 `tools/supervisor_tools.py`: sending
 The two send tools, for inquiry replies and retention notes. They send through the **Gmail API**
-(as a reply in the customer's thread, with an HTML version of the text), then log the email as a
-**HubSpot note**. The Gmail token is fetched before the draft is claimed, so a token problem never
-leaves a draft stuck.
+(as a reply in the customer's thread, with an HTML version of the text), then log it on the
+customer's HubSpot contact as an **outgoing email activity**. The Gmail token is fetched before the
+draft is claimed, so a token problem never leaves a draft stuck.
 **Test:** `test_supervisor_tools.py` (costs tokens and sends real emails).
 
 ### 6.12 `security/auth.py` and `security/permissions.py`: staff login and roles
