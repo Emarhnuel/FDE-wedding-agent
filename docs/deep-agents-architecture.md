@@ -170,13 +170,13 @@ Website form or shared Gmail inbox
     -> API Gateway and Lambda validate and durably record the inquiry
     -> A durable job is queued in SQS
     -> The worker Lambda claims the job and runs the workflow (up to 15 minutes)
-    -> Integration creates or updates a HubSpot Contact
+    -> Integration creates or updates a HubSpot Contact and logs the customer's message on it as an incoming email
     -> Supervisor obtains relevant knowledge and a draft
     -> Software checks the inquiry and proposed reply
         -> Routine, source-backed answer with AUTO_SEND_ROUTINE on: send automatically
         -> Restricted topic: persist a review interrupt and notify staff
         -> Unsupported or unsafe request: hand off to staff
-    -> Record delivery and sync the outcome to HubSpot
+    -> Record delivery and log the sent reply on the HubSpot Contact as an outgoing email
 ```
 
 Connect Gmail using OAuth with limited permissions (`gmail.readonly` to read the inbox and `gmail.send` to reply). Ingest email by **polling**, not Pub/Sub push: an EventBridge Scheduler schedule runs every 8 minutes (`rate(8 minutes)`, input `{"task": "poll_gmail"}`) and invokes the `cron.py` Lambda. Nobody expects a reply within seconds, and polling avoids a public webhook, Pub/Sub, and the 7-day watch renewal. Each poll reads `users.history.list` from the stored history position (`sync_state` table), fetches new inbox messages, skips our own, automated, and bulk mail, and queues one `inquiry` job per message with dedupe key `gmail:{messageId}`. It advances the stored position only after every message is queued. If Gmail returns 404 because the position expired, it falls back to a full sync of the last 7 days; dedupe keys prevent reprocessing. Each Gmail thread maps to agent thread `gmail:{threadId}`, and replies are sent into that thread with `threadId`, `In-Reply-To`/`References`, and a matching `Re:` subject.
