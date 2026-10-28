@@ -1,4 +1,6 @@
+import json
 import os
+from datetime import UTC, datetime
 from typing import Any
 
 from dotenv import load_dotenv
@@ -19,6 +21,10 @@ HUBSPOT_CONTACT_PROPERTIES = [
     "lifecyclestage",
     "hs_lead_status",
 ]
+# HubSpot-defined association type that links an email activity to a contact.
+EMAIL_TO_CONTACT_ASSOCIATION = 198
+# Website form fields shown under the customer's message in HubSpot.
+INQUIRY_DETAILS = (("Preferred venue", "venue"), ("Guest count", "guest_count"), ("Preferred date", "preferred_date"))
 
 
 def _hubspot_headers() -> dict[str, str]:
@@ -112,6 +118,74 @@ def upsert_hubspot_contact(
     )
     response.raise_for_status()
     return response.json()
+
+
+def log_hubspot_email(
+    contact_id: str,
+    *,
+    incoming: bool,
+    sender: str,
+    recipient: str,
+    subject: str,
+    text: str,
+    html: str = "",
+    timestamp: str | None = None,
+) -> str:
+    """Log an email on the contact's HubSpot activity timeline; returns the email activity ID.
+
+    incoming=True is the customer's message to us; False is a reply we sent. The activity only records
+    the email in the CRM: nothing is sent through HubSpot.
+    """
+    properties = {
+        "hs_timestamp": timestamp or datetime.now(UTC).isoformat(),
+        "hs_email_direction": "INCOMING_EMAIL" if incoming else "EMAIL",
+        "hs_email_status": "SENT",
+        "hs_email_subject": subject,
+        "hs_email_text": text,
+        "hs_email_headers": json.dumps(
+            {"from": {"email": sender}, "to": [{"email": recipient}], "cc": [], "bcc": []}
+        ),
+    }
+    if html:
+        properties["hs_email_html"] = html
+    response = database.http.post(
+        f"{HUBSPOT_BASE_URL}/crm/v3/objects/emails",
+        headers=_hubspot_headers(),
+        json={
+            "properties": properties,
+            "associations": [
+                {
+                    "to": {"id": contact_id},
+                    "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": EMAIL_TO_CONTACT_ASSOCIATION}],
+                }
+            ],
+        },
+        timeout=15.0,
+    )
+    response.raise_for_status()
+    return response.json()["id"]
+
+
+def record_incoming_inquiry(payload: dict[str, Any], received_at: str) -> str:
+    """Create or update the customer's HubSpot contact and log their message as an incoming email.
+
+    payload is an inquiry job's payload (website form or Gmail); returns the email activity ID.
+    """
+    email = payload["email"].strip()
+    # Gmail falls back to the address when the sender has no display name; don't store it as a name.
+    name = payload.get("name", "") if payload.get("name", "").strip().lower() != email.lower() else ""
+    contact = upsert_hubspot_contact(email, couple_names=name, phone=payload.get("phone") or "")
+    details = [f"{label}: {payload[key]}" for label, key in INQUIRY_DETAILS if payload.get(key)]
+    text = payload["message"] + ("\n\n" + "\n".join(details) if details else "")
+    return log_hubspot_email(
+        str(contact["id"]),
+        incoming=True,
+        sender=email,
+        recipient=os.environ.get("GMAIL_SENDER", ""),
+        subject=payload.get("subject") or "Website inquiry",
+        text=text,
+        timestamp=received_at,
+    )
 
 
 @tool
