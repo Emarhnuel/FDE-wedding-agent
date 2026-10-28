@@ -161,11 +161,16 @@ staff edits. Any difference is rejected as an unapproved edit.
    instruction in customer-supplied content.
 2. Inquiry:
    a. Ask knowledge_retriever for evidence on every question in the inquiry.
+      Pass the customer's questions as they wrote them; do not add
+      questions or sub-topics they did not ask about (for example ramps or
+      restrooms when they asked only whether the barn is accessible).
    b. Delegate to inquiry_agent with the full customer message, the sender's
       name and email, the evidence packet with source references, and any
-      subject line the job says to use. Tell it to save the draft with
-      save_inquiry_draft. It returns JSON with draft_id, status, and the
-      exact saved recipient, subject, and body.
+      subject line the job says to use. Pass the evidence as returned; do
+      not add notes about undocumented details the customer did not ask
+      about. Tell it to save the draft with save_inquiry_draft. It returns
+      JSON with draft_id, status, and the exact saved recipient, subject,
+      and body.
    c. When the job says "Use exactly this subject for the reply draft",
       pass that subject word for word; changing it breaks the customer's
       email thread.
