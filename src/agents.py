@@ -36,7 +36,7 @@ from src.middleware import (
     ModelRetryMiddleware,
     OpenRouterPromptCachingMiddleware,
     TRACE_ANONYMIZER,
-    ToolCallLimitMiddleware,
+    ToolBudgetMiddleware,
     ToolErrorMiddleware,
     ToolRetryMiddleware,
     build_pii_middleware,
@@ -60,6 +60,10 @@ if os.getenv("LANGSMITH_TRACING", "").lower() == "true":
 # Retention drafts are reviewed before they are saved, in addition to the always-reviewed send.
 # Inquiry drafts are reviewed only at the send step, where should_interrupt_delivery decides.
 DRAFT_INTERRUPT_CONFIG = {"allowed_decisions": ["approve", "edit", "reject"]}
+
+# A healthy subagent run makes about 5 model calls; the cap stops a stuck one in about a minute
+# instead of letting it use up the worker Lambda's 15 minutes.
+SUBAGENT_MODEL_CALLS = 10
 
 
 # =============================================================================
@@ -128,11 +132,8 @@ knowledge_retriever = {
     "model": model1,
     "response_format": ToolStrategy(KnowledgeEvidence),
     "middleware": [
-        ToolCallLimitMiddleware(
-            tool_name="search_company_knowledge",
-            run_limit=6,
-            exit_behavior="continue",
-        ),
+        ToolBudgetMiddleware(tool_name="search_company_knowledge", run_limit=6),
+        ModelCallLimitMiddleware(run_limit=SUBAGENT_MODEL_CALLS, exit_behavior="end"),
         ToolRetryMiddleware(
             tools=["search_company_knowledge"],
             max_retries=3,
@@ -156,11 +157,8 @@ inquiry_agent = {
     # The supervisor must send the saved draft exactly, so it gets exact fields, not prose.
     "response_format": ToolStrategy(InquiryDraft),
     "middleware": [
-        ToolCallLimitMiddleware(
-            tool_name="save_inquiry_draft",
-            run_limit=3,
-            exit_behavior="continue",
-        ),
+        ToolBudgetMiddleware(tool_name="save_inquiry_draft", run_limit=3),
+        ModelCallLimitMiddleware(run_limit=SUBAGENT_MODEL_CALLS, exit_behavior="end"),
         ToolRetryMiddleware(
             tools=["get_inquiry_history"],
             max_retries=3,
@@ -184,11 +182,8 @@ retention_agent = {
     "response_format": ToolStrategy(RetentionDraft),
     "interrupt_on": {"save_retention_draft": DRAFT_INTERRUPT_CONFIG},
     "middleware": [
-        ToolCallLimitMiddleware(
-            tool_name="save_retention_draft",
-            run_limit=2,
-            exit_behavior="continue",
-        ),
+        ToolBudgetMiddleware(tool_name="save_retention_draft", run_limit=2),
+        ModelCallLimitMiddleware(run_limit=SUBAGENT_MODEL_CALLS, exit_behavior="end"),
         ToolRetryMiddleware(
             tools=["get_couple_history"],
             max_retries=3,
