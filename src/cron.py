@@ -10,6 +10,7 @@ run twice: Scheduler delivers at least once, and each job's dedupe key stops dup
 
 import base64
 import os
+import re
 from datetime import UTC, date, datetime, timedelta
 from email.utils import parseaddr
 from zoneinfo import ZoneInfo
@@ -31,6 +32,13 @@ VENUE_TIMEZONE = ZoneInfo(os.environ.get("VENUE_TIMEZONE", "America/Chicago"))
 ANNIVERSARY_LEAD_DAYS = 7
 REFERRAL_AFTER_DAYS = 90
 REFERRAL_CATCH_UP_DAYS = 14  # Still queue a referral if a few daily runs were missed.
+# Mail clients quote the earlier thread under a reply. Only the new text goes to the agent: quoted
+# dates and our own earlier wording would trip SENSITIVE_PATTERN and blur what the customer asked.
+QUOTE_HEADER = re.compile(
+    r"^(?:On\s.{1,300}?\swrote:|-{2,}\s*Original Message\s*-{2,})[ \t]*\r?$",
+    re.MULTILINE | re.DOTALL | re.IGNORECASE,
+)
+
 # A run still "running" an hour after the worker Lambda's timeout (Terraform sets JOB_TIMEOUT_MINUTES)
 # was cut off.
 STALE_RUN = timedelta(minutes=int(os.environ.get("JOB_TIMEOUT_MINUTES", "15")) + 60)
@@ -127,6 +135,14 @@ def plain_text(part: dict) -> str:
     return next((text for sub in part.get("parts", []) if (text := plain_text(sub))), "")
 
 
+def strip_quoted_reply(text: str) -> str:
+    """Drop quoted earlier messages from a reply; keeps the whole text if nothing new is left."""
+    header = QUOTE_HEADER.search(text)
+    new = text[: header.start()] if header else text
+    new = "\n".join(line for line in new.splitlines() if not line.lstrip().startswith(">")).strip()
+    return new or text.strip()
+
+
 def parse_inquiry(message: dict) -> dict | None:
     """Turn a Gmail message into an inquiry payload; None for our own, automated, or bulk mail."""
     headers = {h["name"].lower(): h["value"] for h in message["payload"].get("headers", [])}
@@ -146,7 +162,7 @@ def parse_inquiry(message: dict) -> dict | None:
         "name": name or sender,
         "email": sender,
         "subject": headers.get("subject", ""),
-        "message": (plain_text(message["payload"]) or message.get("snippet", ""))[:5000],
+        "message": strip_quoted_reply(plain_text(message["payload"]) or message.get("snippet", ""))[:5000],
         "message_id_header": headers.get("message-id", ""),
         "gmail_thread_id": message["threadId"],
         "gmail_message_id": message["id"],
