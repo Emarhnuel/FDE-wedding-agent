@@ -20,6 +20,7 @@ from psycopg_pool import ConnectionPool
 from . import database
 from .agents import build_supervisor
 from .schemas import AgentContext
+from .tools.inquiry_tools import record_incoming_inquiry
 from .tools.retention_tools import check_couple_eligibility, get_couple_record
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
@@ -187,6 +188,17 @@ def index_document_job(job: dict) -> str:
     return "completed"
 
 
+def log_inquiry_in_hubspot(job: dict) -> None:
+    """Show the customer's message on their HubSpot contact timeline, once per inquiry job.
+
+    A CRM failure is logged and skipped: the customer still gets an answer.
+    """
+    try:
+        record_incoming_inquiry(job["payload"], received_at=job["created_at"])
+    except Exception as exc:
+        print(f"HubSpot logging failed for job {job['id']}: {type(exc).__name__}: {exc}")
+
+
 def run_job(job_id: str) -> str:
     """Claim and run one job; returns its final status."""
     jobs = database.query_records("jobs", id=f"eq.{job_id}", limit=1)
@@ -213,6 +225,8 @@ def run_job(job_id: str) -> str:
                 set_job_status(job_id, "skipped")
                 return "skipped"
             context, message = start
+            if job["kind"] == "inquiry":
+                log_inquiry_in_hubspot(job)
             agent_input = {"messages": [{"role": "user", "content": message}]}
 
         result = get_agent().invoke(
