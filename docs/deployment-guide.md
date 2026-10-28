@@ -255,6 +255,17 @@ text). The supervisor's final answer is at most three lines.
 Four `ChatOpenRouter` models with reasoning switched on, streaming off, and output-token caps.
 Different agents use different models.
 
+Added later, once the agent ran inside a Lambda with a 15-minute limit: each model gets a **request
+timeout of 240 seconds** and **`max_retries=1`**, so a hung call fails instead of using up the whole
+job.
+- We picked 240 s from real LangSmith traces: healthy calls took up to about 190 s (median 12 to 17 s).
+- `ChatOpenRouter`'s `timeout` is in **milliseconds** (`240_000`), unlike the general LangChain docs.
+- `max_retries=1` gives the OpenRouter SDK a 150-second window for quick 5xx and connection errors; a
+  timed-out call is past that window, so it isn't retried there and goes to `ModelRetryMiddleware`.
+- Never use `max_retries=0`: the SDK then falls back to its own default of retrying timeouts for up to
+  an hour. We proved the setting with a local server that never answers: one attempt, then an error
+  right at the timeout.
+
 ### 6.6 `middleware.py`: the guardrails
 - **Human-in-the-loop gate:** pauses the send tools so staff can approve, edit or reject. It fails
   closed: a reply only sends itself when `AUTO_SEND_ROUTINE=true`, the draft cites sources, it isn't
