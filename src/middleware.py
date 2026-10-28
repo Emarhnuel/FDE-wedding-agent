@@ -202,6 +202,37 @@ class OpenRouterPromptCachingMiddleware(AgentMiddleware):
         return await handler(self._with_breakpoint(request))
 
 
+class ToolBudgetMiddleware(ToolCallLimitMiddleware):
+    """A per-run tool limit that also removes the tool from the model once its budget is spent.
+
+    ToolStrategy forces tool_choice="any", so a model blocked by a plain limit can keep calling the
+    spent tool forever (seen with the retriever). Hiding it leaves the structured answer tool as
+    the way out, so the subagent returns its evidence instead of a limit notice.
+    """
+
+    def __init__(self, tool_name: str, run_limit: int):
+        super().__init__(tool_name=tool_name, run_limit=run_limit, exit_behavior="continue")
+
+    def _within_budget(self, request: ModelRequest) -> ModelRequest:
+        if request.state.get("run_tool_call_count", {}).get(self.tool_name, 0) < self.run_limit:
+            return request
+        return request.override(tools=[t for t in request.tools if getattr(t, "name", None) != self.tool_name])
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        return handler(self._within_budget(request))
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        return await handler(self._within_budget(request))
+
+
 # Payment and identity numbers the venue never needs from an email. Labeled patterns require
 # a digit, so ordinary words after "account" or "passport" are left alone.
 SENSITIVE_NUMBER_PATTERNS = {
@@ -251,6 +282,7 @@ __all__ = [
     "OpenRouterPromptCachingMiddleware",
     "SENSITIVE_NUMBER_PATTERNS",
     "TRACE_ANONYMIZER",
+    "ToolBudgetMiddleware",
     "ToolCallLimitMiddleware",
     "ToolErrorMiddleware",
     "ToolRetryMiddleware",
