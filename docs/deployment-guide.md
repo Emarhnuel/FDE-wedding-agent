@@ -227,9 +227,11 @@ This is the order we built the files in. After most steps we ran a quick check o
 The tests talk to the real services and clean up after themselves. The only stand-in is in
 `test_security.py`, which uses pytest's `monkeypatch` to simulate InsForge failures.
 
-### 6.1 `config.py`: settings
-Reads `.env` and holds the shared settings: the company ID, venue timezone, the switches, and the
-names of every key the app needs.
+### 6.1 `config.py`: the list of keys
+Loads `.env` and reads the service keys (OpenRouter is the one it leaves out) into named settings,
+as one place to see what the app needs. No other module imports it: each one loads `.env` and
+reads the keys it uses itself, and the switches, company ID and timezone are read where they are
+used. It can be left out of a new build.
 
 ### 6.2 `schemas.py`: the runtime context and data shapes
 Defines **`AgentContext`**, a frozen record the server fills in for every run: company ID, contact
@@ -993,11 +995,14 @@ Actions every time.
    like a deploy.
 3. It removes that environment's Lambdas, API, queues, schedules, website, image repository,
    knowledge bucket and app secret.
-   - **Dev** is removed completely, even with files and images left in it. Its secret is deleted at
-     once.
-   - **Prod** is protected: the destroy stops with an error while the knowledge bucket still has
-     files or the image repository still has images, so nothing is lost by mistake. Its secret can be
-     restored for 30 days after deletion.
+   - The destroy script first turns on `force_destroy_buckets` for that run, so the knowledge bucket
+     (with every file version) and the image repository (with its images) are deleted even when they
+     are not empty. This applies to prod too: prod's normal deploys keep the protection, but a destroy
+     you confirmed removes everything.
+   - **Dev's** secret is deleted at once. **Prod's** secret can be restored for 30 days after
+     deletion, so its name can't be reused until then.
+   - Destroying prod needs the same approval as a prod deploy, and the run must use the `main`
+     branch (**Use workflow from: main**), because the prod environment only allows `main`.
 4. From your own computer, `scripts/destroy.sh` or `scripts/destroy.ps1` does the same.
 5. The destroy never touches the **bootstrap**: the Terraform state bucket and the GitHub deploy role
    stay. They cost almost nothing, and the state bucket is protected from deletion. Leave them unless
