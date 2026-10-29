@@ -15,6 +15,7 @@ images/
 evaluation-results.md
 docs/project-tasks.md
 docs/youtube-script.md
+docs/youtube-series-plan.md
 .claude/worktrees/
 # Terraform working files (state can hold secrets; lock file is kept)
 *.tfstate
