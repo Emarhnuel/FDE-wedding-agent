@@ -124,7 +124,7 @@ agent_backend = CompositeBackend(
 knowledge_retriever = {
     "name": "knowledge_retriever",
     "description": (
-        "Searches published Juniper Hollow company knowledge in ChromaDB for venue capacities, "
+        "Searches published Juniper Hollow company knowledge for venue capacities, "
         "amenities, catering, rules, FAQs, and internal reference policies. Read-only."
     ),
     "system_prompt": KNOWLEDGE_RETRIEVER_SYSTEM_PROMPT,
