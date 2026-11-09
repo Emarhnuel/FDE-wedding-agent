@@ -25,7 +25,7 @@ AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 STATE_BUCKET="${PROJECT_NAME}-terraform-state-${AWS_ACCOUNT_ID}"
 
 echo "This permanently deletes ${PROJECT_NAME}-${ENVIRONMENT} in account ${AWS_ACCOUNT_ID} (${AWS_REGION}):"
-echo "the website, API, functions, agent runtime, queues, uploaded knowledge files, and images."
+echo "the website, API, functions, queues, uploaded knowledge files, and images."
 if [[ "${CI:-}" != "true" ]]; then
   read -r -p "Type the environment name (${ENVIRONMENT}) to confirm: " CONFIRMATION
   if [[ "$CONFIRMATION" != "$ENVIRONMENT" ]]; then
@@ -50,9 +50,9 @@ if ! terraform workspace select "$ENVIRONMENT" 2>/dev/null; then
   exit 0
 fi
 
-# Turn on force_destroy first, so the bucket (with every file version) and the ECR repositories (with
-# their images) can be deleted even when they are not empty. prod keeps it off in normal deploys.
-echo "==> Allowing the bucket and repositories to be deleted with their contents"
+# Turn on force_destroy first, so the bucket (with every file version) and the ECR repository (with
+# its images) can be deleted even when they are not empty. prod keeps it off in normal deploys.
+echo "==> Allowing the bucket and repository to be deleted with their contents"
 terraform apply -input=false -auto-approve "${TF_VARS[@]}" \
   -target=aws_s3_bucket.knowledge -target=aws_ecr_repository.app
 

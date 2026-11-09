@@ -35,11 +35,6 @@ output "ecr_lambda_repository_url" {
   value       = aws_ecr_repository.app["lambda"].repository_url
 }
 
-output "ecr_agentcore_repository_url" {
-  description = "Push the linux/arm64 AgentCore image here (tag: the git commit SHA); used only with enable_agentcore."
-  value       = aws_ecr_repository.app["agentcore"].repository_url
-}
-
 output "app_secret_name" {
   description = "Secrets Manager secret to fill with the app's keys (JSON) after the first apply."
   value       = aws_secretsmanager_secret.app.name
@@ -58,11 +53,6 @@ output "jobs_dead_letter_queue_url" {
 output "knowledge_bucket_name" {
   description = "Private bucket with uploaded knowledge files."
   value       = aws_s3_bucket.knowledge.bucket
-}
-
-output "agent_runtime_arn" {
-  description = "AgentCore runtime the worker invokes; null while the worker runs jobs itself."
-  value       = var.enable_agentcore ? aws_bedrockagentcore_agent_runtime.app[0].agent_runtime_arn : null
 }
 
 output "lambda_function_names" {

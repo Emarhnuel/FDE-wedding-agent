@@ -2,11 +2,11 @@
 
 Every step uses live services and no mocks:
 - the FastAPI app (in-process `TestClient`) authenticated by a real InsForge staff account;
-- `runtime.run_job`, the same function AgentCore runs, with the real model, Postgres checkpoints and RAG;
+- `runtime.run_job`, the same function the worker Lambda runs, with the real model, Postgres checkpoints and RAG;
 - real HubSpot and real Gmail sends to TEST_EMAIL_RECIPIENT (defaults to GMAIL_SENDER).
 
 Only the AWS hops are skipped: with no JOBS_QUEUE_URL the API records jobs without SQS, and the test
-calls `run_job` directly where the worker would invoke AgentCore. Costs model tokens and sends real email.
+calls `run_job` directly where the worker Lambda would. Costs model tokens and sends real email.
 Inquiry replies pause once, at the send step, unless AUTO_SEND_ROUTINE lets a routine reply go out.
 """
 

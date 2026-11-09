@@ -15,7 +15,7 @@ from langchain.tools import ToolRuntime, tool
 
 from .. import database
 from ..schemas import AgentContext
-from .inquiry_tools import HUBSPOT_BASE_URL, _hubspot_headers, get_hubspot_contact
+from .inquiry_tools import get_hubspot_contact, log_hubspot_email
 from .retention_tools import check_couple_eligibility, get_couple_record
 
 load_dotenv()
@@ -115,30 +115,20 @@ def latest_gmail_inquiry(draft: dict[str, Any]) -> dict[str, Any] | None:
     return jobs[0]["payload"] if jobs else None
 
 
-def record_hubspot_email_note(recipient: str, subject: str, body: str) -> str | None:
-    """Log a sent email as a note on the recipient's HubSpot contact; returns the note ID."""
+def record_hubspot_sent_email(recipient: str, subject: str, body: str) -> str | None:
+    """Log a sent email on the recipient's HubSpot contact timeline; returns the email activity ID."""
     contact = get_hubspot_contact(recipient)
     if not contact:
         return None
-    response = database.http.post(
-        f"{HUBSPOT_BASE_URL}/crm/v3/objects/notes",
-        headers=_hubspot_headers(),
-        json={
-            "properties": {
-                "hs_timestamp": datetime.now(UTC).isoformat(),
-                "hs_note_body": f"AI reply sent — Subject: {subject}\n\n{body}",
-            },
-            "associations": [
-                {
-                    "to": {"id": contact["id"]},
-                    "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 202}],
-                }
-            ],
-        },
-        timeout=15.0,
+    return log_hubspot_email(
+        str(contact["id"]),
+        incoming=False,
+        sender=os.environ.get("GMAIL_SENDER", ""),
+        recipient=recipient,
+        subject=subject,
+        text=body,
+        html=body_to_html(body),
     )
-    response.raise_for_status()
-    return response.json().get("id")
 
 
 # =============================================================================
@@ -260,7 +250,7 @@ def deliver_claimed_draft(
         "reviewed_by": draft.get("reviewed_by"),
     }
     try:
-        details["hubspot_note_id"] = record_hubspot_email_note(draft["recipient"], draft["subject"], draft["body"])
+        details["hubspot_email_id"] = record_hubspot_sent_email(draft["recipient"], draft["subject"], draft["body"])
     except Exception as exc:
         # The email is already sent; a CRM sync failure must not change delivery status.
         details["hubspot_sync_error"] = type(exc).__name__

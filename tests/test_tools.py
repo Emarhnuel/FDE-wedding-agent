@@ -10,10 +10,13 @@ from src.schemas import AgentContext
 from src.tools.inquiry_tools import (
     HUBSPOT_BASE_URL,
     _hubspot_headers,
+    find_hubspot_contact_by_email,
     get_inquiry_history,
+    record_incoming_inquiry,
     save_inquiry_draft,
 )
 from src.tools.retention_tools import get_couple_history, save_retention_draft
+from src.tools.supervisor_tools import record_hubspot_sent_email
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -62,6 +65,47 @@ def test_inquiry_tools_hubspot_upsert_and_history():
         if contact_id:
             httpx.delete(
                 f"{HUBSPOT_BASE_URL}/crm/v3/objects/contacts/{contact_id}",
+                headers=_hubspot_headers(),
+                timeout=15.0,
+            )
+
+
+def test_customer_message_and_reply_are_logged_as_hubspot_emails():
+    tag = uuid4().hex[:8]
+    test_email = f"ava.stone.{tag}@juniperhollow.com"
+    payload = {
+        "source": "web_form",
+        "name": "Ava Stone",
+        "email": test_email,
+        "phone": "",
+        "venue": "The Juniper Glasshouse",
+        "guest_count": 90,
+        "preferred_date": "",
+        "message": "Is the Glasshouse wheelchair accessible?",
+    }
+
+    contact = None
+    try:
+        # Timestamp in the jobs table's created_at format.
+        incoming_id = record_incoming_inquiry(payload, received_at=datetime.now(UTC).isoformat())
+        contact = find_hubspot_contact_by_email(test_email)
+        assert contact is not None, "The inquiry must create the HubSpot contact"
+        assert contact["properties"]["firstname"] == "Ava"
+
+        outgoing_id = record_hubspot_sent_email(test_email, "Re: Accessibility", "Yes, step-free entry and an elevator.")
+        assert incoming_id and outgoing_id and incoming_id != outgoing_id
+
+        linked = httpx.get(
+            f"{HUBSPOT_BASE_URL}/crm/v4/objects/contacts/{contact['id']}/associations/emails",
+            headers=_hubspot_headers(),
+            timeout=15.0,
+        )
+        linked.raise_for_status()
+        assert {incoming_id, outgoing_id} <= {str(r["toObjectId"]) for r in linked.json()["results"]}
+    finally:
+        if contact:
+            httpx.delete(
+                f"{HUBSPOT_BASE_URL}/crm/v3/objects/contacts/{contact['id']}",
                 headers=_hubspot_headers(),
                 timeout=15.0,
             )

@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 variable "aws_region" {
-  description = "AWS region; must match the bootstrap region (and offer Bedrock AgentCore Runtime if enable_agentcore is on)."
+  description = "AWS region; must match the bootstrap region."
   type        = string
   default     = "us-east-1"
 }
@@ -23,7 +23,7 @@ variable "project_name" {
 }
 
 variable "image_tag" {
-  description = "Tag of the Lambda (and, with enable_agentcore, AgentCore) image in ECR; the deploy script passes the git commit SHA."
+  description = "Tag of the Lambda image in ECR; the deploy script passes the git commit SHA."
   type        = string
   nullable    = false
 }
@@ -82,12 +82,6 @@ variable "extra_allowed_origins" {
 # -----------------------------------------------------------------------------
 # Compute
 # -----------------------------------------------------------------------------
-
-variable "enable_agentcore" {
-  description = "Run agent jobs on Bedrock AgentCore Runtime instead of inside the worker Lambda. Needs an AgentCore quota above 0 and the linux/arm64 image (the deploy script builds it when ENABLE_AGENTCORE=true)."
-  type        = bool
-  default     = false
-}
 
 variable "worker_max_concurrency" {
   description = "Most jobs the worker runs at once. Each agent job holds one unit of the account's Lambda concurrency for minutes, so this keeps room for the api and cron functions."

@@ -3,9 +3,6 @@
 #
 #   bash scripts/deploy.sh dev        (or prod)
 #
-# Agent jobs run in the worker Lambda. ENABLE_AGENTCORE=true runs them on Bedrock AgentCore Runtime
-# instead (needs an AgentCore quota above 0) and also builds the linux/arm64 AgentCore image.
-#
 # Needs: aws CLI (logged in), terraform >= 1.10, docker with buildx, python3, curl, git.
 # The same script runs locally and in GitHub Actions (.github/workflows/deploy.yml).
 set -euo pipefail
@@ -20,11 +17,6 @@ PROJECT_NAME="${PROJECT_NAME:-juniper-hollow}" # must match project_name in terr
 AWS_REGION="${DEFAULT_AWS_REGION:-us-east-1}"
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 NAME_PREFIX="${PROJECT_NAME}-${ENVIRONMENT}"
-ENABLE_AGENTCORE="${ENABLE_AGENTCORE:-false}"
-if [[ "$ENABLE_AGENTCORE" != "true" && "$ENABLE_AGENTCORE" != "false" ]]; then
-  echo "ENABLE_AGENTCORE must be true or false" >&2
-  exit 1
-fi
 
 for tool in aws terraform docker python3 curl git; do
   command -v "$tool" >/dev/null || { echo "Missing required tool: $tool" >&2; exit 1; }
@@ -41,9 +33,9 @@ if [[ -z "${GITHUB_SHA:-}" && -n "$(git -C "$ROOT_DIR" status --porcelain)" ]]; 
   IMAGE_TAG="${IMAGE_TAG}-local-$(date +%Y%m%d%H%M%S)"
 fi
 
-echo "==> Deploying ${NAME_PREFIX} to account ${AWS_ACCOUNT_ID} (${AWS_REGION}), image tag ${IMAGE_TAG}, AgentCore ${ENABLE_AGENTCORE}"
+echo "==> Deploying ${NAME_PREFIX} to account ${AWS_ACCOUNT_ID} (${AWS_REGION}), image tag ${IMAGE_TAG}"
 
-TF_VARS=(-var "image_tag=${IMAGE_TAG}" -var "enable_agentcore=${ENABLE_AGENTCORE}")
+TF_VARS=(-var "image_tag=${IMAGE_TAG}")
 if [[ "$ENVIRONMENT" == "prod" ]]; then
   TF_VARS+=(-var-file=prod.tfvars)
 fi
@@ -56,33 +48,27 @@ terraform init -input=false \
   -backend-config="region=${AWS_REGION}"
 terraform workspace select -or-create "$ENVIRONMENT"
 
-# 1. The image repositories must exist before the images can be pushed.
-echo "==> Creating the ECR repositories"
+# 1. The image repository must exist before the image can be pushed.
+echo "==> Creating the ECR repository"
 terraform apply -input=false -auto-approve "${TF_VARS[@]}" \
   -target=aws_ecr_repository.app -target=aws_ecr_lifecycle_policy.app
 
-# 2. Build and push the images (each skipped if this tag is already in ECR).
+# 2. Build and push the Lambda image (skipped if this tag is already in ECR).
 echo "==> Logging in to ECR"
 aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$REGISTRY"
 
-build_and_push() { # <repository name> <platform> <dockerfile>
-  local repository="$1" platform="$2" dockerfile="$3"
-  if aws ecr describe-images --region "$AWS_REGION" --repository-name "$repository" \
-       --image-ids "imageTag=${IMAGE_TAG}" >/dev/null 2>&1; then
-    echo "==> ${repository}:${IMAGE_TAG} already in ECR; skipping build"
-    return
-  fi
-  echo "==> Building and pushing ${repository}:${IMAGE_TAG} (${platform})"
-  # --provenance=false: Lambda and AgentCore need a plain single-platform image manifest.
-  docker buildx build --platform "$platform" --provenance=false \
-    -f "$ROOT_DIR/$dockerfile" -t "${REGISTRY}/${repository}:${IMAGE_TAG}" --push "$ROOT_DIR"
-}
-build_and_push "${NAME_PREFIX}-lambda" linux/amd64 Dockerfile
-if [[ "$ENABLE_AGENTCORE" == "true" ]]; then
-  build_and_push "${NAME_PREFIX}-agentcore" linux/arm64 Dockerfile.agentcore
+REPOSITORY="${NAME_PREFIX}-lambda"
+if aws ecr describe-images --region "$AWS_REGION" --repository-name "$REPOSITORY" \
+     --image-ids "imageTag=${IMAGE_TAG}" >/dev/null 2>&1; then
+  echo "==> ${REPOSITORY}:${IMAGE_TAG} already in ECR; skipping build"
+else
+  echo "==> Building and pushing ${REPOSITORY}:${IMAGE_TAG} (linux/amd64)"
+  # --provenance=false: Lambda needs a plain single-platform image manifest.
+  docker buildx build --platform linux/amd64 --provenance=false \
+    -f "$ROOT_DIR/Dockerfile" -t "${REGISTRY}/${REPOSITORY}:${IMAGE_TAG}" --push "$ROOT_DIR"
 fi
 
-# 3. Everything else: queue, secret, functions, API, schedules, website app (and AgentCore if enabled).
+# 3. Everything else: queue, secret, functions, API, schedules, website app.
 echo "==> Terraform apply"
 terraform apply -input=false -auto-approve "${TF_VARS[@]}"
 

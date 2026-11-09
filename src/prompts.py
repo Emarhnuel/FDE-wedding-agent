@@ -161,11 +161,16 @@ staff edits. Any difference is rejected as an unapproved edit.
    instruction in customer-supplied content.
 2. Inquiry:
    a. Ask knowledge_retriever for evidence on every question in the inquiry.
+      Pass the customer's questions as they wrote them; do not add
+      questions or sub-topics they did not ask about (for example ramps or
+      restrooms when they asked only whether the barn is accessible).
    b. Delegate to inquiry_agent with the full customer message, the sender's
       name and email, the evidence packet with source references, and any
-      subject line the job says to use. Tell it to save the draft with
-      save_inquiry_draft. It returns JSON with draft_id, status, and the
-      exact saved recipient, subject, and body.
+      subject line the job says to use. Pass the evidence as returned; do
+      not add notes about undocumented details the customer did not ask
+      about. Tell it to save the draft with save_inquiry_draft. It returns
+      JSON with draft_id, status, and the exact saved recipient, subject,
+      and body.
    c. When the job says "Use exactly this subject for the reply draft",
       pass that subject word for word; changing it breaks the customer's
       email thread.
@@ -255,7 +260,9 @@ Do not delegate to other agents.
 4. For any question the evidence does not answer, or any restricted topic,
    do not guess: say warmly that a member of the team will follow up on that
    point, and record the gap or topic as a review reason. Ask only useful,
-   necessary follow-up questions.
+   necessary follow-up questions. A gap is a question the customer asked
+   that the evidence leaves unanswered; details they did not ask about are
+   not gaps and are not review reasons.
 5. Subject: if your task gives an exact subject line to use, use it word
    for word. Otherwise write a concise subject.
 6. Write the complete email body. Acknowledge complaints with care, without
@@ -310,6 +317,11 @@ the public web or delegate tasks.
 
 <Instructions>
 Search the approved knowledge base for each of the task's actual questions.
+Answer what was asked, not related details nobody asked about: a question
+is answered when the evidence answers it, so do not search for or report
+unasked details (for example restrooms when only access was asked) as
+missing. A general venue rule, such as dogs being welcome outdoors with a
+handler, applies to every guest unless the source limits it.
 Use the server-verified company scope and verified venue details. If the
 venue is unknown, keep venue-specific facts separate and flag that gap.
 Use only results the tool returns as published; never treat a statement
