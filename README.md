@@ -23,6 +23,7 @@ This is a **Forward Deployed AI Engineering** course project. We take a vague Up
 - [Setup, step by step](#-setup-step-by-step)
 - [Try it locally](#-try-it-locally)
 - [Running the tests](#-running-the-tests)
+- [Evaluating the agent](#-evaluating-the-agent)
 - [Deployment](#%EF%B8%8F-deployment)
 - [Status](#-status)
 
@@ -110,8 +111,8 @@ Budget about **30 minutes**, most of it spent collecting API keys.
 You need **Python 3.12+**, **[uv](https://docs.astral.sh/uv/)** and **git**.
 
 ```bash
-git clone <this-repo-url>
-cd juniper-hollow-agent
+git clone https://github.com/Emarhnuel/FDE-wedding-agent.git
+cd FDE-wedding-agent
 uv sync
 ```
 
@@ -267,6 +268,20 @@ uv run pytest tests/test_security.py           # one file
 
 ---
 
+## 📊 Evaluating the agent
+
+A LangSmith evaluation in `evals/` runs real inquiries through the agent and scores routing, citations, length, tool use and groundedness. It uses its own company ID (`eval-juniper-hollow`) and forces `AUTO_SEND_ROUTINE` off, so no email is ever sent.
+
+```bash
+uv run python -m evals.dataset                     # create the dataset in LangSmith (once)
+uv run python -m evals.run --limit 1 --no-upload   # smoke test: one example, nothing recorded
+uv run python -m evals.run                         # the full experiment
+```
+
+> 💸 The full run costs model tokens and takes close to an hour, and it runs on your computer, so keep it on until the score summary prints. The details are in **[docs/langsmith-evaluation-notes.md](docs/langsmith-evaluation-notes.md)** and Part 15 of the deployment guide.
+
+---
+
 ## ☁️ Deployment
 
 Two environments, **dev** and **prod**, each a Terraform workspace with its own state in S3 (locked with an S3 lock file, no DynamoDB needed).
@@ -278,6 +293,8 @@ Two environments, **dev** and **prod**, each a Terraform workspace with its own 
 - 🖥️ The same deploy scripts work on your laptop (PowerShell or bash) and in CI
 
 One run does everything: it builds the Lambda image, applies Terraform, then uploads the frontend. The worker Lambda runs the agent jobs (up to 15 minutes each, at most 2 at a time). Secrets live in AWS Secrets Manager (`juniper-hollow-<env>/app`); fill it after the first deploy, and update the Gmail refresh token there when it is renewed.
+
+> 🧭 **Deploying for the first time?** Follow **[docs/deployment-guide.md](docs/deployment-guide.md)**, Parts 11 to 14. It covers creating the AWS login, running the one-time Terraform bootstrap, adding the two GitHub secrets (`AWS_ROLE_ARN`, `DEFAULT_AWS_REGION`) and the `dev`/`prod` environments, then the first deploy and filling the app secret.
 
 ---
 

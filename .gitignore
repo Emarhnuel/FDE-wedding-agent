@@ -18,6 +18,7 @@ docs/youtube-script.md
 docs/youtube-script.docx
 docs/youtube-series-plan.md
 .claude/worktrees/
+.claude/agents/
 # Terraform working files (state can hold secrets; lock file is kept)
 *.tfstate
 *.tfstate.*
