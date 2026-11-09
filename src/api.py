@@ -82,10 +82,10 @@ def run_job_locally(job_id: str) -> None:
     run_job(job_id)
 
 
-def queue_job(kind: str, thread_id: str, dedupe_key: str, payload: dict, company_id: str = COMPANY_ID) -> dict:
+def queue_job(kind: str, thread_id: str, dedupe_key: str, payload: dict, company_id: str | None = None) -> dict:
     """Record the job durably, then hand it to SQS once; duplicates are not re-sent."""
     job, created = database.enqueue_job(
-        company_id=company_id, kind=kind, thread_id=thread_id, dedupe_key=dedupe_key, payload=payload
+        company_id=company_id or COMPANY_ID, kind=kind, thread_id=thread_id, dedupe_key=dedupe_key, payload=payload
     )
     if created:
         send_job(job)
