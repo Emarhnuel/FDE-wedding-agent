@@ -9,5 +9,8 @@ extra_allowed_origins = []
 force_destroy_buckets = false
 log_retention_days    = 30
 
+# Every prod reply waits for staff approval until auto-send has been proven on dev.
+auto_send_routine = false
+
 api_throttling_rate_limit  = 10
 api_throttling_burst_limit = 20
