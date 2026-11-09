@@ -1,8 +1,8 @@
 """End-to-end tests: real inquiries run through the supervisor agent and are delivered via Gmail.
 
-Each test drives the full workflow: knowledge retrieval, drafting (paused for staff review),
-guarded delivery (paused when policy requires it), staff approval in the "portal", and a
-real Gmail send. Uses live OpenRouter, ChromaDB, InsForge, HubSpot, and Gmail, so it costs
+Each test drives the full workflow: knowledge retrieval, drafting, guarded delivery (inquiry
+replies pause at the send step, retention at saving and sending), staff approval in the "portal",
+and a real Gmail send. Uses live OpenRouter, InsForge (pgvector), HubSpot, and Gmail, so it costs
 model tokens and sends real emails to TEST_EMAIL_RECIPIENT (defaults to GMAIL_SENDER).
 """
 
@@ -16,7 +16,7 @@ import httpx
 import pytest
 from langgraph.types import Command
 
-from src import database, rag
+from src import database, middleware, rag
 from src.schemas import AgentContext
 from src.tools.inquiry_tools import HUBSPOT_BASE_URL, _hubspot_headers, find_hubspot_contact_by_email
 
@@ -32,6 +32,8 @@ MAX_REVIEW_ROUNDS = 8
 def supervisor():
     assert RECIPIENT, "Set TEST_EMAIL_RECIPIENT or GMAIL_SENDER in .env"
     database.init_schema()
+    # Every send must pause here, whatever AUTO_SEND_ROUTINE is in .env.
+    middleware.AUTO_SEND_ROUTINE = False
 
     # Publish the knowledge pack for this test company only.
     rag.index_document(
@@ -145,7 +147,7 @@ def test_routine_inquiry_is_drafted_reviewed_and_sent(supervisor):
         approve_everything,
     )
 
-    assert "save_inquiry_draft" in [name for name, _ in reviewed], "Drafting must pause for staff review"
+    assert "send_customer_email" in [name for name, _ in reviewed], "The send must pause for staff review"
     sent = [d for d in drafts_for(conversation_id) if d["status"] == "sent"]
     assert len(sent) == 1, f"Expected exactly one sent draft, got {[d['status'] for d in drafts_for(conversation_id)]}"
     assert sent[0]["recipient"] == RECIPIENT
